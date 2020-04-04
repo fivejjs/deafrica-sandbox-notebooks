@@ -372,9 +372,9 @@ def get_training_data_for_shp(polygons,
 
         # set up query based on polygon (convert to WGS84)
         geom = geometry.Geometry(
-            polygons.geometry.values[0].__geo_interface__, geometry.CRS(
+            polygons.geometry.values[index].__geo_interface__, geometry.CRS(
                 'epsg:4326'))
-
+        #print(geom)    
         q = {"geopolygon": geom}
 
         # merge polygon query with user supplied query params
@@ -395,7 +395,7 @@ def get_training_data_for_shp(polygons,
                               products=products,
                               output_crs=output_crs,
                               **dc_query)
-            
+
         # create polygon mask
         mask = rasterio.features.geometry_mask(
             [geom.to_crs(ds.geobox.crs) for geoms in [geom]],
@@ -418,11 +418,9 @@ def get_training_data_for_shp(polygons,
                                                  index=calc_indices,
                                                  drop=drop,
                                                  collection=collection)
-                        print(data)
-                        method_to_call = getattr(ds, reduce_func)
-                        data = method_to_call('time')
-                        print(data)
-                
+                        method_to_call = getattr(data, reduce_func)
+                        data = method_to_call(dim='time')
+
                 elif reduce_func == 'geomedian':
                     data = GeoMedian().compute(ds)
                     with HiddenPrints():
