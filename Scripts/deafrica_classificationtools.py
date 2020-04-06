@@ -483,7 +483,6 @@ def get_training_data_for_shp(polygons,
     
     return [field] + list(data.data_vars)
 
-
 class KMeans_tree(ClusterMixin):
     """
     A hierarchical KMeans unsupervised clustering model. This class is 
