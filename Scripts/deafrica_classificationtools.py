@@ -45,6 +45,7 @@ import os
 sys.path.append('../Scripts')
 from deafrica_datahandling import mostcommon_crs, load_ard
 from deafrica_bandindices import calculate_indices
+from deafrica_spatialtools import xr_rasterize
 
 
 def sklearn_flatten(input_xr):
@@ -299,52 +300,62 @@ class HiddenPrints:
 
 
 def get_training_data_for_shp(polygons,
-                              out,
                               products,
                               dc_query,
+                              custom_func=None,
                               field=None,
                               calc_indices=None,
                               reduce_func=None,
                               drop=True,
-                              zonal_stats=None,
-                              collection=None):
+                              zonal_stats=None):
+    
     """
-    Function to extract data for training a classifier using a shapefile 
-    of labelled polygons.
-
+    Function to extract data for training a machine learning classifier using a shapefile 
+    of labelled polygons. This function provides a number of pre-defined methods 
+    for producing training data, including calcuating band indices, reducing 
+    time series using several summary statistics, and/or generating zonal statistics
+    across polygons.  The 'custom_func' parameter provides a method for providing
+    a user supplied function that can be applied to the loaded satellite data.
+     
     Parameters
     ----------
     polygons : geopandas geodataframe
         polygon data in the form of a geopandas geodataframe
-    out : list
-        Empty list to contain output data.
     products : list
-        a list of products ot load from the datacube. 
+        a list of products to load from the datacube. 
         e.g. ['ls8_usgs_sr_scene', 'ls7_usgs_sr_scene']
     dc_query : dictionary
         Datacube query object, should not contain lat and long (x or y)
         variables as these are supplied by the 'polygons' variable
     field : string 
-        A string containing name of column with labels in shapefile 
-        attribute table. Field must contain numeric values.
+        A string containing the name of column with class labels. 
+        Field must contain numeric values.
+    custom_func : function, optional 
+        A custom function for extracting training data. If this parameter
+        is set, all other options (excluding 'zonal_stats'), will be ignored.
+        The result of the custom_func must be a single xarray dataset 
+        containing coordinates x, y (no time dimension). The custom function
+        has access to the datacube dataset extracted using the 'dc_query' params,
+        along with access to the 'dc_query' dictionary, which could be used
+        to load other products.
     calc_indices: list, optional
         An optional list giving the names of any remote sensing indices 
-        to be calculated on the loaded data (e.g. `['NDWI', 'NDVI']`. 
+        to be calculated on the loaded data (e.g. `['NDWI', 'NDVI']`). Will
+        be ignored if custom_func is provided.
     reduce_func : string, optional 
         Function to reduce the data from multiple time steps to
-        a single timestep. Options are 'mean'
-    drop : booleam, optional , 'median', or 'geomedian'
+        a single timestep. Options are 'mean', 'median', or 'geomedian'.
+        Ignored if custom_func is provided.
+    drop : boolean, optional , 
         If this variable is set to True, and 'calc_indices' are supplied, the
         spectral bands will be dropped from the dataset leaving only the
-        band indices as data variables in the dataset. Default is False.
-    zonal_stats: string, optional
+        band indices as data variables in the dataset. Default is True.
+    zonal_stats : string, optional
         An optional string giving the names of zonal statistics to calculate 
-        for the polygon. Default is None (all pixel values). Supported 
-        values are 'mean' or 'median' 
-    collection: string, optional
-        to calculate band indices, the satellite collection is required.
-        Options include 'c1' for Landsat C1, 'c2' for Landsat C2, and 
-        's2' for Sentinel 2.
+        for each polygon. Default is None (all pixel values). Supported 
+        values are 'mean', 'median', and 'std'. Will work in conjuction
+        with a custom_func.
+
 
     Returns
     --------
@@ -352,18 +363,24 @@ def get_training_data_for_shp(polygons,
     each pixel or polygon.
 
     """
+    
     #prevent function altering dictionary kwargs
     dc_query = deepcopy(dc_query)
     dc = datacube.Datacube(app='training_data')
 
     #set up some print statements
     i = 0
-    if calc_indices is not None:
+    if custom_func is not None:
+            print("Reducing data using user supplied custom function")   
+    if calc_indices is not None and custom_func is None:
             print("Calculating indices: " + str(calc_indices))
-    if reduce_func is not None:
+    if reduce_func is not None and custom_func is None:
             print("Reducing data using: " + reduce_func)
     if zonal_stats is not None:
             print("Taking zonal statistic: "+ zonal_stats)
+    
+    # list to store results
+    out = []
     
     # loop through polys and extract training data
     for index, row in polygons.iterrows():
@@ -374,6 +391,7 @@ def get_training_data_for_shp(polygons,
         geom = geometry.Geometry(
             polygons.geometry.values[index].__geo_interface__, geometry.CRS(
                 'epsg:4326'))
+        
         #print(geom)    
         q = {"geopolygon": geom}
 
@@ -397,71 +415,86 @@ def get_training_data_for_shp(polygons,
                               **dc_query)
 
         # create polygon mask
-        mask = rasterio.features.geometry_mask(
-            [geom.to_crs(ds.geobox.crs) for geoms in [geom]],
-            out_shape=ds.geobox.shape,
-            transform=ds.geobox.affine,
-            all_touched=False,
-            invert=False)
+        with HiddenPrints():
+            mask = xr_rasterize(polygons.iloc[[index]], ds)
+        
+        #mask dataset
+        ds = ds.where(mask)
+        
+        # Use custom function for training data if it exists
+        if custom_func is not None:
+            with HiddenPrints():
+                data = custom_func(ds)
+        
+        else:       
+            #first check enough variable are set to run
+            if (len(ds.time.values) > 1) and (reduce_func==None):
+                    raise ValueError("You're dataset has "+ str(len(ds.time.values)) + 
+                                     " time-steps, please provide a reduction function," +
+                                     " e.g. reduce_func='mean'")
+                    
+            if calc_indices is not None:
+                #determine which collection is being loaded
+                if 'level2' in products[0]:
+                    collection = 'c2'
+                elif 'gm' in products[0]:
+                    collection = 'c2'
+                elif 'sr' in products[0]:
+                    collection = 'c1'
+                elif 's2' in products:
+                    collection = 's2'
+            
+                if len(ds.time.values) > 1:
 
-        mask = xr.DataArray(mask, dims=("y", "x"))
-        ds = ds.where(mask == False)
+                    if reduce_func in ['mean', 'median', 'std']:
+                        with HiddenPrints():
+                            data = calculate_indices(ds,
+                                                     index=calc_indices,
+                                                     drop=drop,
+                                                     collection=collection)
+                            method_to_call = getattr(data, reduce_func)
+                            data = method_to_call(dim='time')
 
-        # Check if band indices are wanted
-        if calc_indices is not None:
+                    elif reduce_func == 'geomedian':
+                        data = GeoMedian().compute(ds)
+                        with HiddenPrints():
+                            data = calculate_indices(data,
+                                                     index=calc_indices,
+                                                     drop=drop,
+                                                     collection=collection)
 
-            if len(ds.time.values) > 1:
+                    else:
+                        raise Exception(reduce_func+ " is not one of the supported" + 
+                                        " reduce functions ('std', 'mean', 'median', 'geomedian')")
                 
-                if reduce_func in ['mean', 'median', 'std']:
+                else:
                     with HiddenPrints():
                         data = calculate_indices(ds,
                                                  index=calc_indices,
                                                  drop=drop,
                                                  collection=collection)
-                        method_to_call = getattr(data, reduce_func)
-                        data = method_to_call(dim='time')
 
-                elif reduce_func == 'geomedian':
-                    data = GeoMedian().compute(ds)
-                    with HiddenPrints():
-                        data = calculate_indices(data,
-                                                 index=calc_indices,
-                                                 drop=drop,
-                                                 collection=collection)
-                
+            # when band indices are not required, reduce the
+            # dataset to a 2d array through means or (geo)medians
+            if calc_indices is None:
+
+                if len(ds.time.values) > 1:
+
+                    if reduce_func == 'geomedian':
+                        data = GeoMedian().compute(ds)
+
+                    elif reduce_func in ['mean', 'median', 'std']:
+                        method_to_call = getattr(ds, reduce_func)
+                        data = method_to_call('time')
                 else:
-                    raise Exception(f'{zonal_stats} is not one of the supported reduce functions ("std", "mean", "median")')
-
-            else:
-                with HiddenPrints():
-                    data = calculate_indices(ds,
-                                             index=calc_indices,
-                                             drop=drop,
-                                             collection=collection)
-
-        # when band indices are not required, reduce the
-        # dataset to a 2d array through means or (geo)medians
-        if calc_indices is None:
-            if (len(ds.time.values) > 1) and (reduce_func==None):
-                raise ValueError("You're dataset has "+ str(len(ds.time.values)) + 
-                                 "time-steps, please provide a reduction function, e.g. reduce_func='mean'")
-                
-            if len(ds.time.values) > 1:
-                
-                if reduce_func == 'geomedian':
-                    data = GeoMedian().compute(ds)
-                
-                elif reduce_func in ['mean', 'median', 'std']:
-                    method_to_call = getattr(ds, reduce_func)
-                    data = method_to_call('time')
-            else:
-                data = ds.squeeze()
+                    data = ds.squeeze()
 
         # compute in case we have dask arrays
-        data = data.compute()
+        if 'dask_chunks' in dc_query.keys():
+            data = data.compute()
         
         if zonal_stats is None:
-            # If no summary stats were requested then extract all pixel values
+            # If no zonal stats were requested then extract all pixel values
             flat_train = sklearn_flatten(data)
             # Make a labelled array of identical size
             flat_val = np.repeat(row[field], flat_train.shape[0])
@@ -474,14 +507,25 @@ def get_training_data_for_shp(polygons,
             stacked = np.hstack((row[field], flat_train))
         
         else:
-            raise Exception(f'{zonal_stats} is not one of the supported reduce functions ("std", "mean", "median")')
+            raise Exception(zonal_stats+ " is not one of the supported" +
+                            " reduce functions ('mean', 'median', 'std')")
        
         # Append training data and label to list
         out.append(stacked)
+        
         i+=1
-    # Return a list of labels for columns in output array
     
-    return [field] + list(data.data_vars)
+    # Stack the extracted training data for each feature into a single array
+    model_input = np.vstack(out)
+    print(f'\nOutput training data has shape {model_input.shape}')
+    
+    # Remove any potential nans
+    model_input = model_input[~np.isnan(model_input).any(axis=1)]
+    print("Removed NaNs, cleaned input shape: ", model_input.shape)
+    
+    # Return a list of labels for columns in output array
+    return [field] + list(data.data_vars), model_input
+    
 
 class KMeans_tree(ClusterMixin):
     """
