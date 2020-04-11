@@ -1,3 +1,28 @@
+# training_data_parallel.py
+'''
+Description: This file contains a set of python functions for extracting
+training data from the ODC in parallel across many cpus. This can be useful
+when a very large number of training data polygons or points are to be queried.  
+
+License: The code in this notebook is licensed under the Apache License, 
+Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Digital Earth 
+Africa data is licensed under the Creative Commons by Attribution 4.0 
+license (https://creativecommons.org/licenses/by/4.0/).
+
+Contact: If you need assistance, please post a question on the Open Data 
+Cube Slack channel (http://slack.opendatacube.org/) or on the GIS Stack 
+Exchange (https://gis.stackexchange.com/questions/ask?tags=open-data-cube) 
+using the `open-data-cube` tag (you can view previously asked questions 
+here: https://gis.stackexchange.com/questions/tagged/open-data-cube).
+
+If you would like to report an issue with this script, you can file one on 
+Github https://github.com/digitalearthafrica/deafrica-sandbox-notebooks/issues
+
+Last modified: April 2020
+
+
+'''
+
 import numpy as np
 import xarray as xr
 import geopandas as gpd
@@ -9,7 +34,6 @@ from tqdm import tqdm
 from datacube_stats.statistics import GeoMedian
 import sys
 import os
-import dask
 
 sys.path.append('../Scripts')
 from deafrica_datahandling import mostcommon_crs, load_ard
@@ -31,6 +55,66 @@ def get_training_data_for_shp(gdf,
                               reduce_func=None,
                               drop=True,
                               zonal_stats=None):
+    
+    """
+    Function to extract data for training a machine learning classifier using a geopandas 
+    geodataframe of labelled geometries.  The function will loop through each row in a geopandas
+    dataframe and extract ODC data for the region encompassed by the geometry. 
+    This function provides a number of pre-defined methods for producing training data, 
+    including calcuating band indices, reducing time series using several summary statistics, 
+    and/or generating zonal statistics across polygons.  The 'custom_func' parameter provides 
+    a method for the user to supply a function for generating features.
+     
+    Parameters
+    ----------
+    gdf : geopandas geodataframe
+        geometry data in the form of a geopandas geodataframe
+    products : list
+        a list of products to load from the datacube. 
+        e.g. ['ls8_usgs_sr_scene', 'ls7_usgs_sr_scene']
+    dc_query : dictionary
+        Datacube query object, should not contain lat and long (x or y)
+        variables as these are supplied by the 'gdf' variable
+    field : string 
+        A string containing the name of column with class labels. 
+        Field must contain numeric values.
+    out_arrs : multiprocessing.Manager.list() 
+        An empty Manage.list into which the training data arrays are stored.
+    out_vars : multiprocessing.Manager.list() 
+        An empty list into which the data varaible names are stored.
+    custom_func : function, optional 
+        A custom function for generating feature layers. If this parameter
+        is set, all other options (excluding 'zonal_stats'), will be ignored.
+        The result of the 'custom_func' must be a single xarray dataset 
+        containing 2D coordinates (i.e x, y - no time dimension). The custom function
+        has access to the datacube dataset extracted using the 'dc_query' params,
+        along with access to the 'dc_query' dictionary itself, which could be used
+        to load other products.
+    calc_indices: list, optional
+        An optional list giving the names of any remote sensing indices 
+        to be calculated on the loaded data (e.g. `['NDWI', 'NDVI']`). Will
+        be ignored if custom_func is provided.
+    reduce_func : string, optional 
+        Function to reduce the data from multiple time steps to
+        a single timestep. Options are 'mean', 'median', 'std',
+        'max', 'min', 'geomedian'.  Ignored if custom_func is provided.
+    drop : boolean, optional , 
+        If this variable is set to True, and 'calc_indices' are supplied, the
+        spectral bands will be dropped from the dataset leaving only the
+        band indices as data variables in the dataset. Default is True.
+    zonal_stats : string, optional
+        An optional string giving the names of zonal statistics to calculate 
+        for each polygon. Default is None (all pixel values). Supported 
+        values are 'mean', 'median', 'max', 'min', and 'std'. Will work in 
+        conjuction with a custom_func.
+
+
+    Returns
+    --------
+    Two lists, one containing list of numpy.arrays containing classes and extracted data for 
+    each pixel or polygon., and another containing the data variable names.
+
+    """
     
     #prevent function altering dictionary kwargs
     dc_query = deepcopy(dc_query)
@@ -166,10 +250,15 @@ def get_training_data_for_shp(gdf,
     out_vars.append([field] + list(data.data_vars))
 
 
-def get_training_data_parallel(gdf, products, dc_query,
+def get_training_data_parallel(ncpus, gdf, products, dc_query,
          custom_func=None, field=None, calc_indices=None,
          reduce_func=None, drop=True, zonal_stats=None):
-
+        """
+        Function passing the 'get_training_data_f0r_shp' function
+        to a mulitprocessing.Pool
+        Inherits variables from 'main()''
+        
+        """
         # instantiate lists that can be shared across processes
         manager = mp.Manager()
         results = manager.list()
@@ -181,7 +270,7 @@ def get_training_data_parallel(gdf, products, dc_query,
         def update(*a):
             pbar.update()
         
-        with mp.Pool(mp.cpu_count()-1) as pool:
+        with mp.Pool(ncpus) as pool:
             for index, row in gdf.iterrows():
                 pool.apply_async(get_training_data_for_shp,
                                            [gdf,
@@ -204,11 +293,37 @@ def get_training_data_parallel(gdf, products, dc_query,
         
         return column_names, results
 
-def main(gdf, products, dc_query,
+def main(ncpus, gdf, products, dc_query,
          custom_func=None, field=None, calc_indices=None,
          reduce_func=None, drop=True, zonal_stats=None):
     
-    column_names, results = get_training_data_parallel(gdf=gdf,
+    """
+    This function executes the training data functions and tidies the results
+    into a 'model_input' object containing stacked training data arrays
+    which all NaNs removed. 
+    
+    
+    
+    Parameters
+    ----------
+    ncpus : int
+        The number of cpus/processes over which to parallelize the gathering
+        of trainiing data. Use 'mp.cpu_count()' to determine the number of
+        cpus available on a machine.
+      
+    See function 'get_training_data_for_shp' for descriptions of other input
+    parameters.
+    
+    Returns
+    --------
+    Two lists, one contains a list of numpy.arrays with classes and extracted data for 
+    each pixel or polygon, and another containing the data variable names.
+
+    
+    """
+    
+    column_names, results = get_training_data_parallel(ncpus=ncpus,
+                                        gdf=gdf,
                                         products=products,
                                         dc_query=dc_query,
                                         custom_func=custom_func,
@@ -229,20 +344,3 @@ def main(gdf, products, dc_query,
     print("Removed NaNs, cleaned input shape: ", model_input.shape)
     
     return column_names, model_input
-
-
-#---------DASK VERSION THAT WORKS-----
-#This works but only returns the arrays, not the columns.
-# delayed_results = [dask.delayed(parallel_train.get_training_data_for_shp)(input_data[0:4],
-#                                 index,
-#                                 row,
-#                                 products,
-#                                 query,
-#                                 custom_func,
-#                                 field,
-#                                 calc_indices,
-#                                 reduce_func,
-#                                 drop,
-#                                 zonal_stats) for index, row in input_data[0:4].iterrows()]
-
-# results = compute(*delayed_results)
