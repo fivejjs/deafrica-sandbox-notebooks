@@ -299,7 +299,7 @@ class HiddenPrints:
         sys.stdout = self._original_stdout
 
 
-def get_training_data_for_shp(polygons,
+def get_training_data_for_shp(gdf,
                               products,
                               dc_query,
                               custom_func=None,
@@ -310,33 +310,34 @@ def get_training_data_for_shp(polygons,
                               zonal_stats=None):
     
     """
-    Function to extract data for training a machine learning classifier using a shapefile 
-    of labelled polygons. This function provides a number of pre-defined methods 
-    for producing training data, including calcuating band indices, reducing 
-    time series using several summary statistics, and/or generating zonal statistics
-    across polygons.  The 'custom_func' parameter provides a method for providing
-    a user supplied function that can be applied to the loaded satellite data.
+    Function to extract data for training a machine learning classifier using a geopandas 
+    geodataframe of labelled geometries.  The function will loop through each row in a geopandas
+    dataframe and extract ODC data for the region encompassed by the geometry. 
+    This function provides a number of pre-defined methods for producing training data, 
+    including calcuating band indices, reducing time series using several summary statistics, 
+    and/or generating zonal statistics across polygons.  The 'custom_func' parameter provides 
+    a method for the user to supply a function for generating features.
      
     Parameters
     ----------
-    polygons : geopandas geodataframe
-        polygon data in the form of a geopandas geodataframe
+    gdf : geopandas geodataframe
+        geometry data in the form of a geopandas geodataframe
     products : list
         a list of products to load from the datacube. 
         e.g. ['ls8_usgs_sr_scene', 'ls7_usgs_sr_scene']
     dc_query : dictionary
         Datacube query object, should not contain lat and long (x or y)
-        variables as these are supplied by the 'polygons' variable
+        variables as these are supplied by the 'gdf' variable
     field : string 
         A string containing the name of column with class labels. 
         Field must contain numeric values.
     custom_func : function, optional 
-        A custom function for extracting training data. If this parameter
+        A custom function for generating feature layers. If this parameter
         is set, all other options (excluding 'zonal_stats'), will be ignored.
-        The result of the custom_func must be a single xarray dataset 
-        containing coordinates x, y (no time dimension). The custom function
+        The result of the 'custom_func' must be a single xarray dataset 
+        containing 2D coordinates (i.e x, y - no time dimension). The custom function
         has access to the datacube dataset extracted using the 'dc_query' params,
-        along with access to the 'dc_query' dictionary, which could be used
+        along with access to the 'dc_query' dictionary itself, which could be used
         to load other products.
     calc_indices: list, optional
         An optional list giving the names of any remote sensing indices 
@@ -344,8 +345,8 @@ def get_training_data_for_shp(polygons,
         be ignored if custom_func is provided.
     reduce_func : string, optional 
         Function to reduce the data from multiple time steps to
-        a single timestep. Options are 'mean', 'median', or 'geomedian'.
-        Ignored if custom_func is provided.
+        a single timestep. Options are 'mean', 'median', 'std',
+        'max', 'min', 'geomedian'.  Ignored if custom_func is provided.
     drop : boolean, optional , 
         If this variable is set to True, and 'calc_indices' are supplied, the
         spectral bands will be dropped from the dataset leaving only the
@@ -353,8 +354,8 @@ def get_training_data_for_shp(polygons,
     zonal_stats : string, optional
         An optional string giving the names of zonal statistics to calculate 
         for each polygon. Default is None (all pixel values). Supported 
-        values are 'mean', 'median', and 'std'. Will work in conjuction
-        with a custom_func.
+        values are 'mean', 'median', 'max', 'min', and 'std'. Will work in 
+        conjuction with a custom_func.
 
 
     Returns
@@ -366,6 +367,8 @@ def get_training_data_for_shp(polygons,
     
     #prevent function altering dictionary kwargs
     dc_query = deepcopy(dc_query)
+    
+    #connecto to datacube
     dc = datacube.Datacube(app='training_data')
 
     #set up some print statements
@@ -383,13 +386,13 @@ def get_training_data_for_shp(polygons,
     out = []
     
     # loop through polys and extract training data
-    for index, row in polygons.iterrows():
-        print(" Feature {:04}/{:04}\r".format(i + 1, len(polygons)), 
+    for index, row in gdf.iterrows():
+        print(" Feature {:04}/{:04}\r".format(i + 1, len(gdf)), 
               end='')
 
         # set up query based on polygon (convert to WGS84)
         geom = geometry.Geometry(
-            polygons.geometry.values[index].__geo_interface__, geometry.CRS(
+            gdf.geometry.values[index].__geo_interface__, geometry.CRS(
                 'epsg:4326'))
         
         #print(geom)    
@@ -416,7 +419,7 @@ def get_training_data_for_shp(polygons,
 
         # create polygon mask
         with HiddenPrints():
-            mask = xr_rasterize(polygons.iloc[[index]], ds)
+            mask = xr_rasterize(gdf.iloc[[index]], ds)
         
         #mask dataset
         ds = ds.where(mask)
@@ -427,7 +430,7 @@ def get_training_data_for_shp(polygons,
                 data = custom_func(ds)
         
         else:       
-            #first check enough variable are set to run
+            #first check enough variables are set to run functions
             if (len(ds.time.values) > 1) and (reduce_func==None):
                     raise ValueError("You're dataset has "+ str(len(ds.time.values)) + 
                                      " time-steps, please provide a reduction function," +
@@ -446,7 +449,7 @@ def get_training_data_for_shp(polygons,
             
                 if len(ds.time.values) > 1:
 
-                    if reduce_func in ['mean', 'median', 'std']:
+                    if reduce_func in ['mean','median','std','max','min']:
                         with HiddenPrints():
                             data = calculate_indices(ds,
                                                      index=calc_indices,
@@ -465,7 +468,7 @@ def get_training_data_for_shp(polygons,
 
                     else:
                         raise Exception(reduce_func+ " is not one of the supported" + 
-                                        " reduce functions ('std', 'mean', 'median', 'geomedian')")
+                            " reduce functions ('mean','median','std','max','min', 'geomedian')")
                 
                 else:
                     with HiddenPrints():
@@ -483,7 +486,7 @@ def get_training_data_for_shp(polygons,
                     if reduce_func == 'geomedian':
                         data = GeoMedian().compute(ds)
 
-                    elif reduce_func in ['mean', 'median', 'std']:
+                    elif reduce_func in ['mean','median','std','max','min']:
                         method_to_call = getattr(ds, reduce_func)
                         data = method_to_call('time')
                 else:
@@ -500,7 +503,7 @@ def get_training_data_for_shp(polygons,
             flat_val = np.repeat(row[field], flat_train.shape[0])
             stacked = np.hstack((np.expand_dims(flat_val, axis=1), flat_train))
         
-        elif zonal_stats in ['mean', 'median', 'std']:
+        elif zonal_stats in ['mean','median','std','max','min']:
             method_to_call = getattr(data, zonal_stats)
             flat_train = method_to_call()
             flat_train = flat_train.to_array()
@@ -508,7 +511,7 @@ def get_training_data_for_shp(polygons,
         
         else:
             raise Exception(zonal_stats+ " is not one of the supported" +
-                            " reduce functions ('mean', 'median', 'std')")
+                            " reduce functions ('mean','median','std','max','min')")
        
         # Append training data and label to list
         out.append(stacked)
@@ -523,7 +526,7 @@ def get_training_data_for_shp(polygons,
     model_input = model_input[~np.isnan(model_input).any(axis=1)]
     print("Removed NaNs, cleaned input shape: ", model_input.shape)
     
-    # Return a list of labels for columns in output array
+    # Return a list of columns labels, and the model training data
     return [field] + list(data.data_vars), model_input
     
 
