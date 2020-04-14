@@ -1,8 +1,10 @@
 # training_data_parallel.py
+
 '''
 Description: This file contains a set of python functions for extracting
 training data from the ODC in parallel across many cpus. This can be useful
-when a very large number of training data polygons or points are to be queried.  
+when a very large number of training data polygons or points nned to be
+queried to create a training data sample.  
 
 License: The code in this notebook is licensed under the Apache License, 
 Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Digital Earth 
@@ -19,7 +21,6 @@ If you would like to report an issue with this script, you can file one on
 Github https://github.com/digitalearthafrica/deafrica-sandbox-notebooks/issues
 
 Last modified: April 2020
-
 
 '''
 
@@ -41,7 +42,6 @@ from deafrica_bandindices import calculate_indices
 from deafrica_spatialtools import xr_rasterize
 from deafrica_classificationtools import sklearn_flatten, HiddenPrints
 
-
 def get_training_data_for_shp(gdf,
                               index,
                               row,
@@ -57,13 +57,14 @@ def get_training_data_for_shp(gdf,
                               zonal_stats=None):
     
     """
-    Function to extract data for training a machine learning classifier using a geopandas 
+    Function to extract data from the ODC for training a machine learning classifier using a geopandas 
     geodataframe of labelled geometries.  The function will loop through each row in a geopandas
     dataframe and extract ODC data for the region encompassed by the geometry. 
     This function provides a number of pre-defined methods for producing training data, 
     including calcuating band indices, reducing time series using several summary statistics, 
     and/or generating zonal statistics across polygons.  The 'custom_func' parameter provides 
-    a method for the user to supply a function for generating features.
+    a method for the user to supply a function for generating features rather than using the
+    pre-defined methods.
      
     Parameters
     ----------
@@ -80,8 +81,10 @@ def get_training_data_for_shp(gdf,
         Field must contain numeric values.
     out_arrs : multiprocessing.Manager.list() 
         An empty Manage.list into which the training data arrays are stored.
+        This is handled by the 'get_training_data_parallel' function.
     out_vars : multiprocessing.Manager.list() 
         An empty list into which the data varaible names are stored.
+        This is handled by the 'get_training_data_parallel' function.
     custom_func : function, optional 
         A custom function for generating feature layers. If this parameter
         is set, all other options (excluding 'zonal_stats'), will be ignored.
@@ -89,11 +92,10 @@ def get_training_data_for_shp(gdf,
         containing 2D coordinates (i.e x, y - no time dimension). The custom function
         has access to the datacube dataset extracted using the 'dc_query' params,
         along with access to the 'dc_query' dictionary itself, which could be used
-        to load other products.
+        to load other products besides those specified under 'products'.
     calc_indices: list, optional
-        An optional list giving the names of any remote sensing indices 
-        to be calculated on the loaded data (e.g. `['NDWI', 'NDVI']`). Will
-        be ignored if custom_func is provided.
+        If not using a custom func, the this parameter provides a method for
+        calculating any number of remote sensing indices (e.g. `['NDWI', 'NDVI']`).
     reduce_func : string, optional 
         Function to reduce the data from multiple time steps to
         a single timestep. Options are 'mean', 'median', 'std',
@@ -104,22 +106,27 @@ def get_training_data_for_shp(gdf,
         band indices as data variables in the dataset. Default is True.
     zonal_stats : string, optional
         An optional string giving the names of zonal statistics to calculate 
-        for each polygon. Default is None (all pixel values). Supported 
+        for each polygon. Default is None (all pixel values are returned). Supported 
         values are 'mean', 'median', 'max', 'min', and 'std'. Will work in 
-        conjuction with a custom_func.
+        conjuction with a 'custom_func'.
 
 
     Returns
     --------
-    Two lists, one containing list of numpy.arrays containing classes and extracted data for 
-    each pixel or polygon., and another containing the data variable names.
+    Two lists, a list of numpy.arrays containing classes and extracted data for 
+    each pixel or polygon, and another containing the data variable names.
 
     """
     
     #prevent function altering dictionary kwargs
     dc_query = deepcopy(dc_query)
     
-    #connecto to datacube
+    # remove dask chunks if supplied as using mulitprocessing
+    # for parallization  
+    if 'dask_chunks' in dc_query.keys():
+        dc_query.pop('dask_chunks', None)
+    
+    #connec to to datacube
     dc = datacube.Datacube(app='training_data')
 
     # set up query based on polygon (convert to WGS84)
@@ -132,7 +139,7 @@ def get_training_data_for_shp(gdf,
 
     # merge polygon query with user supplied query params
     dc_query.update(q)
-
+    
     # Identify the most common projection system in the input query
     output_crs = mostcommon_crs(dc=dc, product=products, query=dc_query)
 
@@ -227,14 +234,14 @@ def get_training_data_for_shp(gdf,
     # compute in case we have dask arrays
     if 'dask_chunks' in dc_query.keys():
         data = data.compute()
-
+    
     if zonal_stats is None:
         # If no zonal stats were requested then extract all pixel values
         flat_train = sklearn_flatten(data)
         # Make a labelled array of identical size
         flat_val = np.repeat(row[field], flat_train.shape[0])
         stacked = np.hstack((np.expand_dims(flat_val, axis=1), flat_train))
-
+        
     elif zonal_stats in ['mean','median','std','max','min']:
         method_to_call = getattr(data, zonal_stats)
         flat_train = method_to_call()
@@ -253,23 +260,23 @@ def get_training_data_for_shp(gdf,
 def get_training_data_parallel(ncpus, gdf, products, dc_query,
          custom_func=None, field=None, calc_indices=None,
          reduce_func=None, drop=True, zonal_stats=None):
+    
         """
         Function passing the 'get_training_data_f0r_shp' function
-        to a mulitprocessing.Pool
-        Inherits variables from 'main()''
+        to a mulitprocessing.Pool.
+        Inherits variables from 'main()'.
         
         """
         # instantiate lists that can be shared across processes
         manager = mp.Manager()
         results = manager.list()
         column_names = manager.list()
-        
-        print('extracting training data...')
+
         #progress bar
         pbar = tqdm(total=len(gdf))
         def update(*a):
             pbar.update()
-        
+
         with mp.Pool(ncpus) as pool:
             for index, row in gdf.iterrows():
                 pool.apply_async(get_training_data_for_shp,
@@ -290,7 +297,7 @@ def get_training_data_parallel(ncpus, gdf, products, dc_query,
             pool.close()
             pool.join()
             pbar.close()
-        
+
         return column_names, results
 
 def main(ncpus, gdf, products, dc_query,
@@ -300,17 +307,16 @@ def main(ncpus, gdf, products, dc_query,
     """
     This function executes the training data functions and tidies the results
     into a 'model_input' object containing stacked training data arrays
-    which all NaNs removed. 
-    
-    
+    with all NaNs removed. In the instance where ncpus=1, a serial version of the
+    function will be run instead of passing the functions to mp.Pool.
     
     Parameters
     ----------
     ncpus : int
         The number of cpus/processes over which to parallelize the gathering
-        of trainiing data. Use 'mp.cpu_count()' to determine the number of
+        of training data (only if ncpus is > 1). Use 'mp.cpu_count()' to determine the number of
         cpus available on a machine.
-      
+    
     See function 'get_training_data_for_shp' for descriptions of other input
     parameters.
     
@@ -321,8 +327,45 @@ def main(ncpus, gdf, products, dc_query,
 
     
     """
+    #set up some print statements
+    if custom_func is not None:
+            print("Reducing data using user supplied custom function")   
+    if calc_indices is not None and custom_func is None:
+            print("Calculating indices: " + str(calc_indices))
+    if reduce_func is not None and custom_func is None:
+            print("Reducing data using: " + reduce_func)
+    if zonal_stats is not None:
+            print("Taking zonal statistic: "+ zonal_stats)
     
-    column_names, results = get_training_data_parallel(ncpus=ncpus,
+    if ncpus == 1:
+        #progress indicator
+        i = 0
+        # list to store results
+        results = []
+        column_names = []
+        # loop through polys and extract training data
+        for index, row in gdf.iterrows():
+            print(" Feature {:04}/{:04}\r".format(i + 1, len(gdf)), 
+                  end='')
+
+            get_training_data_for_shp(gdf,
+                                    index,
+                                    row,
+                                    results,
+                                    column_names,
+                                    products,
+                                    dc_query,
+                                    custom_func,
+                                    field,
+                                    calc_indices,
+                                    reduce_func,
+                                    drop,
+                                    zonal_stats)
+            i+=1
+            
+
+    else:
+        column_names, results = get_training_data_parallel(ncpus=ncpus,
                                         gdf=gdf,
                                         products=products,
                                         dc_query=dc_query,
