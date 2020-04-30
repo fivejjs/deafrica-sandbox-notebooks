@@ -99,21 +99,22 @@ def _veos(da, ieos):
     return da[ieos][0]
 
 
-def PhenologyMetrics(ds,
-                     doy,
-                     stats=[
-                         'SOS',
-                         'EOS',
-                         'vSOS',
-                         'vPOS',
-                         'vEOS',
-                         'LOS',
-                         'AOS',
-                         'IOS',
-                         'ROG',
-                         'ROS',
-                         'SW'],
-                     drop=True):
+def xr_phenology(ds,
+                 doy,
+                 stats=[
+                     'SOS',
+                     'EOS',
+                     'vSOS',
+                     'vPOS',
+                     'vEOS',
+                     'LOS',
+                     'AOS',
+                     'IOS',
+                     'ROG',
+                     'ROS',
+                     'SW'],
+                 drop=True):
+    
     """
     Obtain land surfurface phenology metrics from an
     xarray.Dataset that contains a a timeseries of vegetation
