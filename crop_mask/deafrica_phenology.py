@@ -5,98 +5,138 @@ from scipy.integrate import trapz
 from scipy.stats import skew
 
 # fucntions to calculate each statistc
-# Note there are many inter-dependicies between functions
-
 def _vpos(da):
+    """
+    vPOS = Value at peak of season
+    """
     return da.max('time')
-    
-def _ipos(da, vpos):
-    return da.where(da == vpos)
 
-def _pos(doy, ipos):
-    return doy.where(ipos)
+def _pos(da):
+    """
+    POS = DOY of peak of season
+    """
+    return da.isel(time=da.argmax('time')).time.dt.dayofyear
 
 def _trough(da):
     return da.min('time')
 
 def _aos(vpos, trough):
+    """
+    AOS = Amplitude of season
+    """
     return vpos - trough
 
-# scale annual time series to 0-1
 def _ratio(da, trough, aos):
+    """
+    Scale annual time series to 0-1
+    """
     return (da - trough) / aos
 
-def _sos(ratio, doy, ipos):
-    # separate greening from senesence values
-    dev = np.gradient(ratio)  # first derivative
-    greenup = np.zeros([ratio.shape[0]],  dtype=bool)
-    greenup[dev > 0] = True
-
-    # estimate SOS as median of the seasons
-    i = np.nanmedian(doy[:ipos[0][0]][greenup[:ipos[0][0]]])
-    sos = doy[(np.abs(doy - i)).argmin()]
-    if sos is None:
-        isos = 0
-        sos = doy[isos]
-    return sos
-
-def _isos(doy, sos):
-    return np.where(doy == int(sos))[0]
-
-def _eos(ratio, doy, sos):
-    # separate greening from senesence values
-    dev = np.gradient(ratio)  # first derivative
-    greenup = np.zeros([ratio.shape[0]],  dtype=bool)
-    greenup[dev > 0] = True
-    i = np.nanmedian(doy[ipos[0][0]:][~greenup[ipos[0][0]:]])
-    eos = doy[(np.abs(doy - i)).argmin()]
-    if eos is None:
-        ieos = len(doy) - 1
-        eos = doy[ieos]
-    return eos
-
-def _ieos(doy, eos):    
-    return np.where(doy == eos)[0]
-
-def _vsos(da, isos):
-    return da[isos][0]
-
-def _veos(da, ieos):
-    return da[ieos][0]
-
-def _los(eos, sos, da):
-    los = eos - sos
-    if los < 0:
-        los[los < 0] = len(da) + (eos[los < 0] - sos[los < 0])
-    return los
-
-def _rog(doy, sos, eos, da, vpos, isos, pos):
-    green = doy[(doy > sos) & (doy < eos)]
-    _id = []
-    for i in range(len(green)):
-        _id.append((doy == green[i]).nonzero()[0])
-    _id = np.array([item for sublist in _id for item in sublist])
-    ios = trapz(da[_id], doy[_id])
-    rog = (vpos - da[isos]) / (pos - sos)
-    return rog[0]
+# def _sos(ratio, doy, ipos):
+#     """
+#     SOS = DOY of start of season
+#     """
     
-def _ros(da, ieos, vpos, eos, pos):
-    ros = (da[ieos] - vpos) / (eos - pos)
-    return ros[0]
+#     # separate greening from senesence values
+#     dev = np.gradient(ratio)  # first derivative
+#     greenup = np.zeros([ratio.shape[0]],  dtype=bool)
+#     greenup[dev > 0] = True
 
-def _sw(da, doy, sos, eos):
-    green = doy[(doy > sos) & (doy < eos)]
-    _id = []
-    for i in range(len(green)):
-        _id.append((doy == green[i]).nonzero()[0])
-    _id = np.array([item for sublist in _id for item in sublist]) 
-    return skew(da[_id])
+#     # estimate SOS as median of the seasons
+#     i = np.nanmedian(doy[:ipos[0][0]][greenup[:ipos[0][0]]])
+#     sos = doy[(np.abs(doy - i)).argmin()]
+#     if sos is None:
+#         isos = 0
+#         sos = doy[isos]
+#     return sos
 
-def _vsos(da, isos):
-    return da[isos][0]
+# def _isos(doy, sos):
+#     """
+#     isos = index of start of season
+#     """
+#     return np.where(doy == int(sos))[0]
 
-def _veos(da, ieos): 
-    return da[ieos][0]
+# def _eos(ratio, doy, sos):
+#     """
+#     EOS = DOY of end of season
+#     """
+#     # separate greening from senesence values
+#     dev = np.gradient(ratio)  # first derivative
+#     greenup = np.zeros([ratio.shape[0]],  dtype=bool)
+#     greenup[dev > 0] = True
+#     i = np.nanmedian(doy[ipos[0][0]:][~greenup[ipos[0][0]:]])
+#     eos = doy[(np.abs(doy - i)).argmin()]
+#     if eos is None:
+#         ieos = len(doy) - 1
+#         eos = doy[ieos]
+#     return eos
+
+# def _ieos(doy, eos):    
+#     return np.where(doy == eos)[0]
+
+# def _vsos(da, isos):
+#     """
+#     vSOS = Value at start of season
+#     """
+#     return da[isos][0]
+
+# def _veos(da, ieos):
+#     """
+#     vEOS = Value at end of season
+#     """
+#     return da[ieos][0]
+
+# def _los(eos, sos, da):
+#     """
+#     LOS = Length of season (DOY)
+#     """
+#     los = eos - sos
+#     if los < 0:
+#         los[los < 0] = len(da) + (eos[los < 0] - sos[los < 0])
+#     return los
+
+# def _rog(doy, sos, eos, da, vpos, isos, pos):
+#     """
+#     ROG = Rate of greening
+#     """
+#     green = doy[(doy > sos) & (doy < eos)]
+#     _id = []
+#     for i in range(len(green)):
+#         _id.append((doy == green[i]).nonzero()[0])
+#     _id = np.array([item for sublist in _id for item in sublist])
+#     ios = trapz(da[_id], doy[_id])
+#     rog = (vpos - da[isos]) / (pos - sos)
+#     return rog[0]
+    
+# def _ros(da, ieos, vpos, eos, pos):
+#     """
+#      ROS = Rate of senescence
+#     """
+#     ros = (da[ieos] - vpos) / (eos - pos)
+#     return ros[0]
+
+# def _sw(da, doy, sos, eos):
+#     """
+#     SW = Skewness of growing season
+#     """
+#     green = doy[(doy > sos) & (doy < eos)]
+#     _id = []
+#     for i in range(len(green)):
+#         _id.append((doy == green[i]).nonzero()[0])
+#     _id = np.array([item for sublist in _id for item in sublist]) 
+#     return skew(da[_id])
+
+# def _vsos(da, isos):
+#     """
+#     vSOS = Value at start of season
+#     """
+#     return da[isos][0]
+
+# def _veos(da, ieos): 
+#     """
+#     vEOS = Value at end of season
+#     """
+#     return da[ieos][0]
 
 
 def xr_phenology(ds,
@@ -205,3 +245,4 @@ def xr_phenology(ds,
 
     # Return input dataset with added water index variable
     return ds
+
