@@ -1,7 +1,6 @@
 
 import numpy as np
 import xarray as xr
-from scipy.integrate import trapz
 from scipy.stats import skew
 
 # fucntions to calculate each statistc
@@ -32,14 +31,14 @@ def _aos(vpos, trough):
     """
     return vpos - trough
 
-def _sos(da, ipos, method='first'):
+def _sos(da, ipos, method_sos='first'):
     """
     SOS = DOY of start of season
     
-    method : If 'first' then iSOS is estimated
+    method : If 'first' then SOS is estimated
             as the first positive slope on the
             greening side of the curve. If median,
-            then iSOS is estimated as the median value
+            then SOS is estimated as the median value
             of the postive slopes on the greening side of the
             curve.
     """
@@ -50,13 +49,13 @@ def _sos(da, ipos, method='first'):
     # find where the fst order slope is postive
     pos_green_deriv = green_deriv.where(green_deriv>0, drop=True)
     
-    if method=='first':  
+    if method_sos=='first':  
         # get the timestep where slope first becomes positive to estimate
         # the DOY when growing season starts
         return pos_green_deriv[0].time.dt.dayofyear
     
-    if method == 'median':
-        #grab only the positive greening values
+    if method_sos == 'median':
+        #grab only the increasing greening values
         pos_greenup = greenup.where(pos_green_deriv, drop=True)
         #calulate the median of those positive greening values
         median = pos_greenup.median('time')
@@ -64,7 +63,7 @@ def _sos(da, ipos, method='first'):
         # each value has from median
         distance = pos_greenup - median
         #determine location of the value with the minimum distance from
-        #the median
+        # the median
         idx = distance.where(distance==distance.min(), drop=True)
         return idx.time.dt.dayofyear
     
@@ -74,99 +73,95 @@ def _vsos(da, sos):
     """
     return da.sel(time=sos.time)
 
+def _eos(da, ipos, method_eos='last'):
+    """
+    EOS = DOY of end of season
     
+    method : If 'first' then EOS is estimated
+            as the last negative slope on the
+            senescing side of the curve. If median,
+            then EOS is estimated as the median value
+            of the negative slopes on the senescing 
+            side of the curve.
+    """
+    #select timesteps after peak of season
+    senesce=da.sel(time=slice(ipos.values, da.time[-1].values))
+    # find the first order slopes
+    senesce_deriv = senesce.differentiate('time')
+    # find where the fst order slope is negative
+    neg_senesce_deriv = senesce_deriv.where(senesce_deriv<0, drop=True)
     
-# def _isos(doy, sos):
-#     """
-#     isos = index of start of season
-#     """
-#     return np.where(doy == int(sos))[0]
-
-# def _eos(ratio, doy, sos):
-#     """
-#     EOS = DOY of end of season
-#     """
-#     # separate greening from senesence values
-#     dev = np.gradient(ratio)  # first derivative
-#     greenup = np.zeros([ratio.shape[0]],  dtype=bool)
-#     greenup[dev > 0] = True
-#     i = np.nanmedian(doy[ipos[0][0]:][~greenup[ipos[0][0]:]])
-#     eos = doy[(np.abs(doy - i)).argmin()]
-#     if eos is None:
-#         ieos = len(doy) - 1
-#         eos = doy[ieos]
-#     return eos
-
-# def _ieos(doy, eos):    
-#     return np.where(doy == eos)[0]
-
-# def _vsos(da, isos):
-#     """
-#     vSOS = Value at start of season
-#     """
-#     return da[isos][0]
-
-# def _veos(da, ieos):
-#     """
-#     vEOS = Value at end of season
-#     """
-#     return da[ieos][0]
-
-# def _los(eos, sos, da):
-#     """
-#     LOS = Length of season (DOY)
-#     """
-#     los = eos - sos
-#     if los < 0:
-#         los[los < 0] = len(da) + (eos[los < 0] - sos[los < 0])
-#     return los
-
-# def _rog(doy, sos, eos, da, vpos, isos, pos):
-#     """
-#     ROG = Rate of greening
-#     """
-#     green = doy[(doy > sos) & (doy < eos)]
-#     _id = []
-#     for i in range(len(green)):
-#         _id.append((doy == green[i]).nonzero()[0])
-#     _id = np.array([item for sublist in _id for item in sublist])
-#     ios = trapz(da[_id], doy[_id])
-#     rog = (vpos - da[isos]) / (pos - sos)
-#     return rog[0]
+    if method_eos=='last':  
+        # get the timestep where slope first becomes positive to estimate
+        # the DOY when growing season starts
+        return neg_senesce_deriv[-1].time.dt.dayofyear
     
-# def _ros(da, ieos, vpos, eos, pos):
-#     """
-#      ROS = Rate of senescence
-#     """
-#     ros = (da[ieos] - vpos) / (eos - pos)
-#     return ros[0]
+    if method_eos == 'median':
+        #grab only the declining values
+        neg_greenup = senesce.where(neg_senesce_deriv, drop=True)
+        #calulate the median of those positive greening values
+        median = neg_greenup.median('time')
+        # To determine 'time-of' the median, calculate the distance
+        # each value has from median
+        distance = neg_greenup - median
+        #determine location of the value with the minimum distance from
+        #the median
+        idx = distance.where(distance==distance.min(), drop=True)
+        return idx.time.dt.dayofyear    
 
-# def _sw(da, doy, sos, eos):
-#     """
-#     SW = Skewness of growing season
-#     """
-#     green = doy[(doy > sos) & (doy < eos)]
-#     _id = []
-#     for i in range(len(green)):
-#         _id.append((doy == green[i]).nonzero()[0])
-#     _id = np.array([item for sublist in _id for item in sublist]) 
-#     return skew(da[_id])
+def _veos(da, eos):
+    """
+    vSOS = Value at the start of season
+    """
+    return da.sel(time=eos.time)
 
-# def _vsos(da, isos):
-#     """
-#     vSOS = Value at start of season
-#     """
-#     return da[isos][0]
+def _los(eos, sos):
+    """
+    LOS = Length of season (DOY)
+    """
+    return eos - sos
 
-# def _veos(da, ieos): 
-#     """
-#     vEOS = Value at end of season
-#     """
-#     return da[ieos][0]
+def _ios(da, sos, eos, dt_unit='D'):
+    """
+    IOS = Integral of season (SOS-EOS)
+        
+    dt_unit : str, optional
+            Can be used to specify the unit if datetime
+            coordinate is used. 
+            One of {‘Y’, ‘M’, ‘W’, ‘D’, ‘h’, ‘m’,
+            ‘s’, ‘ms’, ‘us’, ‘ns’, ‘ps’, ‘fs’, ‘as’}
+    """
+    season = da.sel(time=slice(sos.time, eos.time))
+    return season.integrate(dim = 'time', datetime_unit=dt_unit)
 
+def _rog(vpos,vsos,pos,sos):
+    """
+    ROG = Rate of Greening (Days)
+    """
+    return (vpos-vsos) / (pos - sos)
+    
+def _rog(vpos,vsos,pos,sos):
+    """
+    ROG = Rate of Greening (Days)
+    """
+    return (vpos-vsos) / (pos - sos) 
+
+def _ros(veos,vpos,eos,pos):
+    """
+    ROG = Rate of Senescing (Days)
+    """
+    return (veos-vpos) / (eos - pos) 
+
+def _skew(da, sos, eos):
+    season = season = da.sel(time=slice(sos.time, eos.time))
+    return xr.apply_ufunc(
+            skew,
+            season,
+            input_core_dims=[["time"]],
+            dask='allowed')
+    
 
 def xr_phenology(ds,
-                 doy,
                  stats=[
                      'SOS',
                      'EOS',
