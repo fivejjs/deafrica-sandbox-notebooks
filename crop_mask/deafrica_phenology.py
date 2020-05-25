@@ -1,9 +1,11 @@
+# deafrica_phenology.py
+
+
 
 import numpy as np
 import xarray as xr
 from scipy.stats import skew
 
-# fucntions to calculate each statistc
 def _vpos(da):
     """
     vPOS = Value at peak of season
@@ -43,7 +45,7 @@ def _sos(da, ipos, method_sos='first'):
             curve.
     """
     #select timesteps before peak of season (AKA greening)
-    greenup=da.sel(time=slice(da.time[0].values, ipos.values))
+    greenup=da.sel(time=slice(da.time.values[0], ipos.values))
     # find the first order slopes
     green_deriv = greenup.differentiate('time')
     # find where the fst order slope is postive
@@ -153,6 +155,9 @@ def _ros(veos,vpos,eos,pos):
     return (veos-vpos) / (eos - pos) 
 
 def _skew(da, sos, eos):
+    """
+    skew= skewness of growing season (SOS to EOS)
+    """
     season = season = da.sel(time=slice(sos.time, eos.time))
     return xr.apply_ufunc(
             skew,
@@ -161,7 +166,7 @@ def _skew(da, sos, eos):
             dask='allowed')
     
 
-def xr_phenology(ds,
+def xr_phenology(da,
                  stats=[
                      'SOS',
                      'EOS',
@@ -173,28 +178,26 @@ def xr_phenology(ds,
                      'IOS',
                      'ROG',
                      'ROS',
-                     'SW'],
-                 drop=True):
+                     'skew'],
+                    method_sos='first',
+                    method_eos='last',
+                    dt_unit='D'):
     
     """
-    Obtain land surfurface phenology metrics from an
-    xarray.Dataset that contains a a timeseries of vegetation
-    phenology statistics.
+    Obtain land surface phenology metrics from an
+    xarray.DataArray containing a timeseries of a remote-sensinh
+    vegetation index e.g. NDVI or EVI.
     
-    last modified March 2020
+    last modified May 2020
     
     Parameters
     ----------
-    - da:  xarray.Dataset
-    - doy: xarray.DataArray
-        Day-of-year values for each time step in the 'time'
-        dim on 'da'. e.g doy=da.time.dt.dayofyear
-    - stats: list
+    da :  xarray.Dataset
+    stats : list
         list of phenological statistics to return. Regardless of
         the metrics returned, all statistics are
         calculated due to inter-dependicises between metrics.
         Options include:
-            SOS = DOY of start of season
             POS = DOY of peak of season
             EOS = DOY of end of season
             vSOS = Value at start of season
@@ -209,61 +212,46 @@ def xr_phenology(ds,
 
     Outputs
     -------
-        xarray.Dataset 
+        xarray.Dataset containing variables for the selected statistics 
         
     """
-    da = ds.to_array().squeeze()
-    
-    # Capture input band names in order to drop these if drop=True
-    if drop:
-        bands_to_drop=list(ds.data_vars)
-        print(f'Dropping bands {bands_to_drop}')
-    
-    vpos = _vpos(da)   
-    ipos = _ipos(da, vpos)
-    pos = _pos(doy, ipos)
+            
+    vpos=_vpos(da)
+    ipos = _ipos(da)
+    pos = _pos(da)
     trough = _trough(da)
-    aos =_aos(vpos, trough)
-
-    ratio = _ratio(da, trough, aos)
-    sos = _sos(ratio, doy, ipos)
-    eos = _eos(ratio, doy, sos)
-    isos = _isos(doy, sos)
-    ieos = _ieos(doy, eos)
-    los = _los(eos, sos, da)
-    rog = _rog(doy, sos, eos, da, vpos, isos, pos, sos)
-    ros = _ros(da, ieos, vpos, eos, pos)
-    sw = _sw(da, doy, sos, eos)
-    vsos = _vsos(da, isos)
-    veos = _veos(da, ieos)
-
-    stats = list(sos,pos[0],eos, vsos, vpos, veos, los, ampl, ios, rog, ros, sw)
+    aos = _aos(vpos, trough)
+    sos = _sos(da, ipos, method_sos=method_sos)
+    vsos = _vsos(da, sos)
+    eos = _eos(da, ipos, method_eos=method_eos)
+    veos = _veos(da, eos)
+    los = _los(eos, sos)
+    ios = _ios(da, sos, eos, dt_unit=dt_unit)
+    rog = _rog(vpos,vsos,pos,sos)
+    ros = _ros(veos,vpos,eos,pos)
+    skew = _skew(da, sos, eos)
     
     # Dictionary containing the statistics
-    stat_dict = {'SOS':sos,
+    stats_dict = {'SOS':sos,
                  'EOS':eos,
                  'vSOS':vsos,
                  'vPOS':vpos,
+                 'POS':pos,
                  'vEOS':veos,
                  'LOS':los,
-                 'AOS':ampl,
+                 'AOS':aos,
                  'IOS':ios,
                  'ROG':rog,
                  'ROS':ros,
-                 'SW':sw}
+                 'Skew':skew}
     
-    # Add as a new variable in dataset
-    for stat in stats:
-        output_band_name = stat
-        
-        #only keep the stats asked for
-        stat_keep = stat_dict.get(str(stat)) 
-        ds[output_band_name] = index_array
+    #intialise dataset with first statistic
+    ds = stats_dict[stats[0]].to_dataset(name=stats[0])
+    
+    #add the other stats to the dataset
+    for stat in stats[1:]:
+        stats_keep = stats_dict.get(stat)
+        ds[stat] = stats_dict[stat]
 
-    # Once all indexes are calculated, drop input bands if drop=True
-    if drop: 
-        ds = ds.drop(bands_to_drop)
-
-    # Return input dataset with added water index variable
     return ds
 
