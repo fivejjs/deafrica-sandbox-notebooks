@@ -11,6 +11,12 @@ def _vpos(da):
     """
     return da.max('time')
 
+def _ipos(da):
+    """
+    IPOS = time index for peak of season
+    """
+    return da.isel(time=da.argmax('time')).time
+
 def _pos(da):
     """
     POS = DOY of peak of season
@@ -26,30 +32,50 @@ def _aos(vpos, trough):
     """
     return vpos - trough
 
-def _ratio(da, trough, aos):
+def _sos(da, ipos, method='first'):
     """
-    Scale annual time series to 0-1
-    """
-    return (da - trough) / aos
-
-# def _sos(ratio, doy, ipos):
-#     """
-#     SOS = DOY of start of season
-#     """
+    SOS = DOY of start of season
     
-#     # separate greening from senesence values
-#     dev = np.gradient(ratio)  # first derivative
-#     greenup = np.zeros([ratio.shape[0]],  dtype=bool)
-#     greenup[dev > 0] = True
+    method : If 'first' then iSOS is estimated
+            as the first positive slope on the
+            greening side of the curve. If median,
+            then iSOS is estimated as the median value
+            of the postive slopes on the greening side of the
+            curve.
+    """
+    #select timesteps before peak of season (AKA greening)
+    greenup=da.sel(time=slice(da.time[0].values, ipos.values))
+    # find the first order slopes
+    green_deriv = greenup.differentiate('time')
+    # find where the fst order slope is postive
+    pos_green_deriv = green_deriv.where(green_deriv>0, drop=True)
+    
+    if method=='first':  
+        # get the timestep where slope first becomes positive to estimate
+        # the DOY when growing season starts
+        return pos_green_deriv[0].time.dt.dayofyear
+    
+    if method == 'median':
+        #grab only the positive greening values
+        pos_greenup = greenup.where(pos_green_deriv, drop=True)
+        #calulate the median of those positive greening values
+        median = pos_greenup.median('time')
+        # To determine 'time-of' the median calculate the distance
+        # each value has from median
+        distance = pos_greenup - median
+        #determine location of the value with the minimum distance from
+        #the median
+        idx = distance.where(distance==distance.min(), drop=True)
+        return idx.time.dt.dayofyear
+    
+def _vsos(da, sos):
+    """
+    vSOS = Value at the start of season
+    """
+    return da.sel(time=sos.time)
 
-#     # estimate SOS as median of the seasons
-#     i = np.nanmedian(doy[:ipos[0][0]][greenup[:ipos[0][0]]])
-#     sos = doy[(np.abs(doy - i)).argmin()]
-#     if sos is None:
-#         isos = 0
-#         sos = doy[isos]
-#     return sos
-
+    
+    
 # def _isos(doy, sos):
 #     """
 #     isos = index of start of season
