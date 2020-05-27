@@ -5,39 +5,65 @@ import xarray as xr
 from scipy.stats import skew
 
 
-def poly_fit(time, data, degree, n_pts):
+def poly_fit(time, data, degree):
+    
+    pfit = np.polyfit(time, data, degree) 
+    
+    return np.transpose(np.polyval(pfit,time))
+
+def poly_fit_smooth(time, data, degree, n_pts):
         """
         """
         time_smooth_inds = np.linspace(0, len(time), n_pts)
         time_smooth = np.interp(time_smooth_inds, np.arange(len(time)), time)
 
         data_smooth = np.array([np.array([coef * (x_val ** current_degree) for
-                                       coef, current_degree in zip(np.polyfit(time, data, degree),
-                                        range(degree, -1, -1))]).sum() for x_val in time_smooth])
+                                coef, current_degree in zip(np.polyfit(time, data, degree),
+                                range(degree, -1, -1))]).sum() for x_val in time_smooth])
 
         return data_smooth
 
-def xr_polyfit_smooth(dayofyear,
-                      da,
-                      degree,
-                      interp_multiplier):    
-
-    pfit = xr.apply_ufunc(
-        poly_fit,  # The function
-        daysofyear,# time
-        da, #the data
-        kwargs={'degree':degree, 'n_pts':len(dayofyear)*interp_multiplier},
-        input_core_dims=[["time"], ["time"]], 
-        output_core_dims=[['new_time']], 
-        vectorize=True, 
-        dask="allowed",
-        output_dtypes=[data.dtype],
-    ).rename({'new_time':'time'})
-
-    # Map datetime 'dayofyear' onto interpolated time dim
-    time_smooth_inds = np.linspace(0, len(dayofyear), len(dayofyear)*interp_multiplier)
-    new_datetimes = np.interp(time_smooth_inds, np.arange(len(dayofyear)), dayofyear)
-    pfit = pfit.assign_coords({'time':new_datetimes})
+def xr_polyfit(doy,
+               da,
+               degree,
+               interp_multiplier=1):    
+    
+    # Fit polynomial curve to observed data points
+    if interp_multiplier==1:
+        print('Fitting polynomial curve to existing observations')
+        pfit = xr.apply_ufunc(
+            poly_fit,
+            doy,
+            da, 
+            kwargs={'degree':degree},
+            input_core_dims=[["time"], ["time"]], 
+            output_core_dims=[['time']],
+            vectorize=True,  
+            dask="parallelized",
+            output_dtypes=[da.dtype],
+        )
+    
+    if interp_multiplier > 1:
+        print("Fitting polynomial curve to "+str(len(doy)*interp_multiplier)+
+                                                      " interpolated points")
+        pfit = xr.apply_ufunc(
+            poly_fit_smooth,  # The function
+            doy,# time
+            da,#.chunk({'time': -1}), #the data
+            kwargs={'degree':degree, 'n_pts':len(doy)*interp_multiplier},
+            input_core_dims=[["time"], ["time"]], 
+            output_core_dims=[['new_time']], 
+            output_sizes = ({'new_time':len(doy)*interp_multiplier}),
+            exclude_dims=set(("time",)),
+            vectorize=True, 
+            dask="parallelized",
+            output_dtypes=[da.dtype],
+        ).rename({'new_time':'time'})
+    
+        # Map 'dayofyear' onto interpolated time dim
+        time_smooth_inds = np.linspace(0, len(doy), len(doy)*interp_multiplier)
+        new_datetimes = np.interp(time_smooth_inds, np.arange(len(doy)), doy)
+        pfit = pfit.assign_coords({'time':new_datetimes})
     
     return pfit
 
@@ -73,11 +99,9 @@ def _aos(vpos, trough):
     """
     return vpos - trough
 
-
 def _sos(da, ipos, method_sos='first'):
     """
     SOS = DOY of start of season
-    
     method : If 'first' then SOS is estimated
             as the first positive slope on the
             greening side of the curve. If median,
@@ -85,30 +109,60 @@ def _sos(da, ipos, method_sos='first'):
             of the postive slopes on the greening side of the
             curve.
     """
-    #select timesteps before peak of season (AKA greening)
-    greenup = da.sel(time=slice(da.time.values[0], ipos.values))
+    # select timesteps before peak of season (AKA greening)
+    greenup = da.where(da.time < ipos)
     # find the first order slopes
     green_deriv = greenup.differentiate('time')
     # find where the fst order slope is postive
-    pos_green_deriv = green_deriv.where(green_deriv > 0, drop=True)
-
-    if method_sos == 'first':
+    pos_green_deriv = green_deriv.where(green_deriv>0)
+    if method_sos=='first':  
         # get the timestep where slope first becomes positive to estimate
         # the DOY when growing season starts
-        return pos_green_deriv[0].time.dt.dayofyear
-
+        return first(pos_green_deriv, dim='time').time.dt.dayofyear
     if method_sos == 'median':
         #grab only the increasing greening values
-        pos_greenup = greenup.where(pos_green_deriv, drop=True)
-        #calulate the median of those positive greening values
-        median = pos_greenup.median('time')
-        # To determine 'time-of' the median, calculate the distance
-        # each value has from median
-        distance = pos_greenup - median
-        #determine location of the value with the minimum distance from
-        # the median
-        idx = distance.where(distance == distance.min(), drop=True)
-        return idx.time.dt.dayofyear
+        pos_greenup = greenup.where(pos_green_deriv)
+        # find the median "actual" value of those positive greening values
+        # (rather than the mean of the two median values for even-numbered lengths)
+        median_val = pos_greenup.quantile(0.5, dim='time', interpolation='nearest', skipna=True)
+        # find the locations that match the median value 
+        return first(pos_greenup.where(pos_greenup==median_val), dim='time').time.dt.dayofyear
+
+# def _sos(da, ipos, method_sos='first'):
+#     """
+#     SOS = DOY of start of season
+    
+#     method : If 'first' then SOS is estimated
+#             as the first positive slope on the
+#             greening side of the curve. If median,
+#             then SOS is estimated as the median value
+#             of the postive slopes on the greening side of the
+#             curve.
+#     """
+#     #select timesteps before peak of season (AKA greening)
+#     greenup = da.sel(time=slice(da.time.values[0], ipos.values))
+#     # find the first order slopes
+#     green_deriv = greenup.differentiate('time')
+#     # find where the fst order slope is postive
+#     pos_green_deriv = green_deriv.where(green_deriv > 0, drop=True)
+
+#     if method_sos == 'first':
+#         # get the timestep where slope first becomes positive to estimate
+#         # the DOY when growing season starts
+#         return pos_green_deriv[0].time.dt.dayofyear
+
+#     if method_sos == 'median':
+#         #grab only the increasing greening values
+#         pos_greenup = greenup.where(pos_green_deriv, drop=True)
+#         #calulate the median of those positive greening values
+#         median = pos_greenup.median('time')
+#         # To determine 'time-of' the median, calculate the distance
+#         # each value has from median
+#         distance = pos_greenup - median
+#         #determine location of the value with the minimum distance from
+#         # the median
+#         idx = distance.where(distance == distance.min(), drop=True)
+#         return idx.time.dt.dayofyear
 
 
 def _vsos(da, sos):
@@ -218,9 +272,8 @@ def _skew(da, sos, eos):
 def xr_phenology(da,
                  stats=[
                      'SOS', 'POS', 'EOS', 'Trough'
-                     'vSOS', 'vPOS', 'vEOS', 'LOS', 'AOS', 'IOS', 'ROG', 'ROS',
-                     'skew'
-                 ],
+                     'vSOS', 'vPOS', 'vEOS', 'LOS',
+                     'AOS', 'IOS', 'ROG', 'ROS','skew'],
                  method_sos='first',
                  method_eos='last',
                  dt_unit='D',
@@ -263,7 +316,7 @@ def xr_phenology(da,
         
     """
     if fit_curve==True:
-        da=xr_polyfit_smooth(dayofyear=dayofyear, 
+        da=xr_polyfit(dayofyear=dayofyear, 
                               da=da,
                               degree=degree,
                               interp_multiplier=interp_multiplier)
