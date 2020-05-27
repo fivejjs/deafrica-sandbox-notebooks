@@ -1,72 +1,11 @@
 # deafrica_phenology.py
 
+import sys
 import numpy as np
 import xarray as xr
 from scipy.stats import skew
-
-
-def poly_fit(time, data, degree):
-    
-    pfit = np.polyfit(time, data, degree) 
-    
-    return np.transpose(np.polyval(pfit,time))
-
-def poly_fit_smooth(time, data, degree, n_pts):
-        """
-        """
-        time_smooth_inds = np.linspace(0, len(time), n_pts)
-        time_smooth = np.interp(time_smooth_inds, np.arange(len(time)), time)
-
-        data_smooth = np.array([np.array([coef * (x_val ** current_degree) for
-                                coef, current_degree in zip(np.polyfit(time, data, degree),
-                                range(degree, -1, -1))]).sum() for x_val in time_smooth])
-
-        return data_smooth
-
-def xr_polyfit(doy,
-               da,
-               degree,
-               interp_multiplier=1):    
-    
-    # Fit polynomial curve to observed data points
-    if interp_multiplier==1:
-        print('Fitting polynomial curve to existing observations')
-        pfit = xr.apply_ufunc(
-            poly_fit,
-            doy,
-            da, 
-            kwargs={'degree':degree},
-            input_core_dims=[["time"], ["time"]], 
-            output_core_dims=[['time']],
-            vectorize=True,  
-            dask="parallelized",
-            output_dtypes=[da.dtype],
-        )
-    
-    if interp_multiplier > 1:
-        print("Fitting polynomial curve to "+str(len(doy)*interp_multiplier)+
-                                                      " interpolated points")
-        pfit = xr.apply_ufunc(
-            poly_fit_smooth,  # The function
-            doy,# time
-            da,#.chunk({'time': -1}), #the data
-            kwargs={'degree':degree, 'n_pts':len(doy)*interp_multiplier},
-            input_core_dims=[["time"], ["time"]], 
-            output_core_dims=[['new_time']], 
-            output_sizes = ({'new_time':len(doy)*interp_multiplier}),
-            exclude_dims=set(("time",)),
-            vectorize=True, 
-            dask="parallelized",
-            output_dtypes=[da.dtype],
-        ).rename({'new_time':'time'})
-    
-        # Map 'dayofyear' onto interpolated time dim
-        time_smooth_inds = np.linspace(0, len(doy), len(doy)*interp_multiplier)
-        new_datetimes = np.interp(time_smooth_inds, np.arange(len(doy)), doy)
-        pfit = pfit.assign_coords({'time':new_datetimes})
-    
-    return pfit
-
+sys.path.append('../Scripts')
+from deafrica_datahandling import first, last
 
 def _vpos(da):
     """
@@ -74,24 +13,17 @@ def _vpos(da):
     """
     return da.max('time')
 
-
-def _ipos(da):
-    """
-    IPOS = time index for peak of season
-    """
-    return da.isel(time=da.argmax('time')).time
-
-
 def _pos(da):
     """
     POS = DOY of peak of season
     """
     return da.isel(time=da.argmax('time')).time.dt.dayofyear
 
-
 def _trough(da):
+    """
+    Trough = Minimum value in the timeseries
+    """
     return da.min('time')
-
 
 def _aos(vpos, trough):
     """
@@ -99,9 +31,10 @@ def _aos(vpos, trough):
     """
     return vpos - trough
 
-def _sos(da, ipos, method_sos='first'):
+def _vsos(da, pos, method_sos='first'):
     """
-    SOS = DOY of start of season
+    vSOS = Value at the start of season
+    
     method : If 'first' then SOS is estimated
             as the first positive slope on the
             greening side of the curve. If median,
@@ -110,15 +43,17 @@ def _sos(da, ipos, method_sos='first'):
             curve.
     """
     # select timesteps before peak of season (AKA greening)
-    greenup = da.where(da.time < ipos)
+    greenup = da.where(da.time < pos.time)
     # find the first order slopes
     green_deriv = greenup.differentiate('time')
     # find where the fst order slope is postive
     pos_green_deriv = green_deriv.where(green_deriv>0)
+    
     if method_sos=='first':  
         # get the timestep where slope first becomes positive to estimate
         # the DOY when growing season starts
-        return first(pos_green_deriv, dim='time').time.dt.dayofyear
+        return first(pos_green_deriv, dim='time')
+    
     if method_sos == 'median':
         #grab only the increasing greening values
         pos_greenup = greenup.where(pos_green_deriv)
@@ -126,55 +61,17 @@ def _sos(da, ipos, method_sos='first'):
         # (rather than the mean of the two median values for even-numbered lengths)
         median_val = pos_greenup.quantile(0.5, dim='time', interpolation='nearest', skipna=True)
         # find the locations that match the median value 
-        return first(pos_greenup.where(pos_greenup==median_val), dim='time').time.dt.dayofyear
+        return first(pos_greenup.where(pos_greenup==median_val), dim='time')
 
-# def _sos(da, ipos, method_sos='first'):
-#     """
-#     SOS = DOY of start of season
-    
-#     method : If 'first' then SOS is estimated
-#             as the first positive slope on the
-#             greening side of the curve. If median,
-#             then SOS is estimated as the median value
-#             of the postive slopes on the greening side of the
-#             curve.
-#     """
-#     #select timesteps before peak of season (AKA greening)
-#     greenup = da.sel(time=slice(da.time.values[0], ipos.values))
-#     # find the first order slopes
-#     green_deriv = greenup.differentiate('time')
-#     # find where the fst order slope is postive
-#     pos_green_deriv = green_deriv.where(green_deriv > 0, drop=True)
-
-#     if method_sos == 'first':
-#         # get the timestep where slope first becomes positive to estimate
-#         # the DOY when growing season starts
-#         return pos_green_deriv[0].time.dt.dayofyear
-
-#     if method_sos == 'median':
-#         #grab only the increasing greening values
-#         pos_greenup = greenup.where(pos_green_deriv, drop=True)
-#         #calulate the median of those positive greening values
-#         median = pos_greenup.median('time')
-#         # To determine 'time-of' the median, calculate the distance
-#         # each value has from median
-#         distance = pos_greenup - median
-#         #determine location of the value with the minimum distance from
-#         # the median
-#         idx = distance.where(distance == distance.min(), drop=True)
-#         return idx.time.dt.dayofyear
-
-
-def _vsos(da, sos):
+def _sos(vsos):
     """
-    vSOS = Value at the start of season
+    SOS = DOY of start of season
     """
-    return da.sel(time=sos.time)
+    return vsos.time.dt.dayofyear
 
-
-def _eos(da, ipos, method_eos='last'):
+def _veos(da, pos, method_eos='last'):
     """
-    EOS = DOY of end of season
+    vEOS = Value at the start of season
     
     method : If 'first' then EOS is estimated
             as the last negative slope on the
@@ -183,38 +80,32 @@ def _eos(da, ipos, method_eos='last'):
             of the negative slopes on the senescing 
             side of the curve.
     """
-    #select timesteps after peak of season
-    senesce = da.sel(time=slice(ipos.values, da.time[-1].values))
+    # select timesteps before peak of season (AKA greening)
+    senesce = da.where(da.time > pos.time)
     # find the first order slopes
     senesce_deriv = senesce.differentiate('time')
-    # find where the fst order slope is negative
-    neg_senesce_deriv = senesce_deriv.where(senesce_deriv < 0, drop=True)
-
-    if method_eos == 'last':
+    # find where the fst order slope is postive
+    neg_senesce_deriv = senesce_deriv.where(senesce_deriv < 0)
+    
+    if method_eos == 'last':  
         # get the timestep where slope first becomes positive to estimate
         # the DOY when growing season starts
-        return neg_senesce_deriv[-1].time.dt.dayofyear
-
+        return last(neg_senesce_deriv, dim='time')
+    
     if method_eos == 'median':
         #grab only the declining values
-        neg_greenup = senesce.where(neg_senesce_deriv, drop=True)
-        #calulate the median of those positive greening values
-        median = neg_greenup.median('time')
-        # To determine 'time-of' the median, calculate the distance
-        # each value has from median
-        distance = neg_greenup - median
-        #determine location of the value with the minimum distance from
-        #the median
-        idx = distance.where(distance == distance.min(), drop=True)
-        return idx.time.dt.dayofyear
+        neg_greenup = senesce.where(neg_senesce_deriv)
+        # find the median "actual" value of those positive greening values
+        # (rather than the mean of the two median values for even-numbered lengths)
+        median_val = neg_greenup.quantile(0.5, dim='time', interpolation='nearest', skipna=True)
+        # find the locations that match the median value 
+        return last(neg_greenup.where(neg_greenup==median_val), dim='time')
 
-
-def _veos(da, eos):
+def _eos(veos):
     """
-    vSOS = Value at the start of season
+    EOS = DOY of end of seasonn
     """
-    return da.sel(time=eos.time)
-
+    return veos.time.dt.dayofyear
 
 def _los(eos, sos):
     """
@@ -222,33 +113,11 @@ def _los(eos, sos):
     """
     return eos - sos
 
-
-def _ios(da, sos, eos, dt_unit='D'):
-    """
-    IOS = Integral of season (SOS-EOS)
-        
-    dt_unit : str, optional
-            Can be used to specify the unit if datetime
-            coordinate is used. 
-            One of {‘Y’, ‘M’, ‘W’, ‘D’, ‘h’, ‘m’,
-            ‘s’, ‘ms’, ‘us’, ‘ns’, ‘ps’, ‘fs’, ‘as’}
-    """
-    season = da.sel(time=slice(sos.time, eos.time))
-    return season.integrate(dim='time', datetime_unit=dt_unit)
-
-
 def _rog(vpos, vsos, pos, sos):
     """
     ROG = Rate of Greening (Days)
     """
-    return (vpos - vsos) / (pos - sos)
-
-
-def _rog(vpos, vsos, pos, sos):
-    """
-    ROG = Rate of Greening (Days)
-    """
-    return (vpos - vsos) / (pos - sos)
+    return (vpos - vsos) / (sos - pos)
 
 
 def _ros(veos, vpos, eos, pos):
@@ -258,29 +127,18 @@ def _ros(veos, vpos, eos, pos):
     return (veos - vpos) / (eos - pos)
 
 
-def _skew(da, sos, eos):
-    """
-    skew= skewness of growing season (SOS to EOS)
-    """
-    season = da.sel(time=slice(sos.time, eos.time))
-    return xr.apply_ufunc(skew,
-                          season,
-                          input_core_dims=[["time"]],
-                          dask='allowed')
-
-
 def xr_phenology(da,
                  stats=[
                      'SOS', 'POS', 'EOS', 'Trough'
                      'vSOS', 'vPOS', 'vEOS', 'LOS',
-                     'AOS', 'IOS', 'ROG', 'ROS','skew'],
+                     'AOS', 'ROG', 'ROS'],
                  method_sos='first',
                  method_eos='last',
-                 dt_unit='D',
-                 fit_curve=False,
-                 dayofyear=None,
-                 degree=None,
-                 interp_multiplier=None):
+                 interpolate=False,
+                 interpolate_na=False,
+                 interp_method="linear",
+                 interp_interval='1W'):
+    
     """
     Obtain land surface phenology metrics from an
     xarray.DataArray containing a timeseries of a remote-sensinh
@@ -293,8 +151,8 @@ def xr_phenology(da,
     da :  xarray.Dataset
     stats : list
         list of phenological statistics to return. Regardless of
-        the metrics returned, all statistics are
-        calculated due to inter-dependicises between metrics.
+        the metrics returned, all statistics are calculated
+        due to inter-dependencies between metrics.
         Options include:
             SOS = DOY of start of season
             POS = DOY of peak of season
@@ -305,36 +163,43 @@ def xr_phenology(da,
             Trough = Minimum value of season
             LOS = Length of season (DOY)
             AOS = Amplitude of season (in value units)
-            IOS = Integral of season (SOS-EOS)
             ROG = Rate of greening
             ROS = Rate of senescence
-            Skew = Skewness of growing season
+            Skew = Skewness of growing season (NOT IMPLEMENTED YET)
+            IOS = Integral of season (SOS-EOS) (NOT IMPLEMENTED YET)
 
     Outputs
     -------
         xarray.Dataset containing variables for the selected statistics 
         
     """
-    if fit_curve==True:
-        da=xr_polyfit(dayofyear=dayofyear, 
-                              da=da,
-                              degree=degree,
-                              interp_multiplier=interp_multiplier)
+    if (interpolate_na==True) & (interpolate==True):
+        da = da.interpolate_na(dim='time', method=interp_method) 
+        print('removed NaNs')
         
+        #resample time dim and interpolate values
+        da=da.resample(time=interp_interval).interpolate(interp_method)
+        print("    Interpolated dataset to " +str(len(da.time))+ " time-steps")
+     
+    if (interpolate_na==False) & (interpolate==True):
+        da=da.resample(time=interp_interval).interpolate(interp_method)
+        print("Interpolated dataset to " +str(len(da.time))+ " time-steps")
+        
+    if (interpolate_na==True) & (interpolate==False):
+        da = da.interpolate_na(dim='time', method=interp_method)
+        print('removed NaNs')
+   
     vpos = _vpos(da)
-    ipos = _ipos(da)
     pos = _pos(da)
     trough = _trough(da)
     aos = _aos(vpos, trough)
-    sos = _sos(da, ipos, method_sos=method_sos)
-    vsos = _vsos(da, sos)
-    eos = _eos(da, ipos, method_eos=method_eos)
-    veos = _veos(da, eos)
+    vsos = _vsos(da, pos, method_sos=method_sos)
+    sos = _sos(vsos)
+    veos = _veos(da, pos, method_eos=method_eos)
+    eos = _eos(veos)
     los = _los(eos, sos)
-    ios = _ios(da, sos, eos, dt_unit=dt_unit)
     rog = _rog(vpos, vsos, pos, sos)
     ros = _ros(veos, vpos, eos, pos)
-    skew = _skew(da, sos, eos)
 
     # Dictionary containing the statistics
     stats_dict = {
@@ -347,10 +212,8 @@ def xr_phenology(da,
         'vEOS': veos,
         'LOS': los,
         'AOS': aos,
-        'IOS': ios,
         'ROG': rog,
         'ROS': ros,
-        'Skew': skew
     }
 
     #intialise dataset with first statistic
@@ -362,3 +225,28 @@ def xr_phenology(da,
         ds[stat] = stats_dict[stat]
 
     return ds
+
+
+#STATS TO BE IMPLEMENTED
+# def _ios(da, sos, eos, dt_unit='D'):
+#     """
+#     IOS = Integral of season (SOS-EOS)
+        
+#     dt_unit : str, optional
+#             Can be used to specify the unit if datetime
+#             coordinate is used. 
+#             One of {‘Y’, ‘M’, ‘W’, ‘D’, ‘h’, ‘m’,
+#             ‘s’, ‘ms’, ‘us’, ‘ns’, ‘ps’, ‘fs’, ‘as’}
+#     """
+#     season = da.where((ndvi.time > sos.time) & (ndvi.time < eos.time))
+#     return season.integrate(dim='time', datetime_unit=dt_unit)
+
+# def _skew(da, sos, eos):
+#     """
+#     skew= skewness of growing season (SOS to EOS)
+#     """
+#     season = da.where((ndvi.time > sos.time) & (ndvi.time < eos.time))
+#     return xr.apply_ufunc(skew,
+#                           season,
+#                           input_core_dims=[["time"]],
+#                           dask='allowed')
