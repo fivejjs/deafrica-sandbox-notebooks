@@ -1,4 +1,11 @@
 # deafrica_phenology.py
+"""
+This script contains functions for calculating land-surface 
+phenology metrics on a time series of a vegetations index
+stored within an xarray.DataArray.  
+
+"""
+
 
 import sys
 import numpy as np
@@ -7,30 +14,43 @@ from scipy.stats import skew
 sys.path.append('../Scripts')
 from deafrica_datahandling import first, last
 
+
 def allNaN_arg(xarr, dim, stat):
     """
-    Calculate nanargmax or nanargmin.
+    Calculate da.argmax() or da.argmin() while handling
+    all-NaN slices. Fills all-NaN locations with an
+    integer and then masks the offending cells.
     
-    Deals with all-NaN slices by filling those locations
-    with an integer and then masking the offending cells.
+    Value of the fill_na() will never be returned as index 
+    of argmax/min as fill value exceeds the min/max
+    value of the array.
     
-    Value of the fillna() will never be returned as index of argmax/min
-    as fill value exceeds the min/max value of the array.
+    Params
+    ------
+    xarr : xarray.DataArray
+    dim : str, 
+            Dimension over which to calculate argmax, argmin e.g. 'time'
+    stat : str,
+        The statistic to calculte, either 'min' for argmin()
+        or 'max' for .argmax()
+    
+    Returns
+    ------
+    xarray.DataArray
     
     """
     #generate a mask where entire axis along dimension is NaN
     mask = xarr.min(dim=dim, skipna=True).isnull()
-    
-    if stat=='max':
+
+    if stat == 'max':
         y = xarr.fillna(float(xarr.min() - 1))
         y = y.argmax(dim=dim, skipna=True).where(~mask)
         return y
-    
+
     if stat == 'min':
         y = xarr.fillna(float(xarr.max() + 1))
         y = y.argmin(dim=dim, skipna=True).where(~mask)
         return y
-
 
 def _vpos(da):
     """
@@ -46,7 +66,7 @@ def _pos(da):
 
 def _trough(da):
     """
-    Trough = Minimum value in the timeseries
+    Trough = Minimum value
     """
     return da.min('time')
 
@@ -60,39 +80,46 @@ def _vsos(da, pos, method_sos='first'):
     """
     vSOS = Value at the start of season
     
-    method : If 'first' then SOS is estimated
-            as the first positive slope on the
-            greening side of the curve. If median,
-            then SOS is estimated as the median value
-            of the postive slopes on the greening side of the
-            curve.
+    Params
+    -----
+    da : xarray.DataArray
+    method_sos : str, 
+        If 'first' then vSOS is estimated
+        as the first positive slope on the
+        greening side of the curve. If 'median',
+        then vSOS is estimated as the median value
+        of the postive slopes on the greening side
+        of the curve.
+        
     """
     # select timesteps before peak of season (AKA greening)
     greenup = da.where(da.time < pos.time)
     # find the first order slopes
     green_deriv = greenup.differentiate('time')
-    # find where the fst order slope is postive
-    pos_green_deriv = green_deriv.where(green_deriv>0)
-    
-    if method_sos=='first':  
-        # get the timestep where slope first becomes positive to estimate
-        # the DOY when growing season starts
+    # find where the first order slope is postive
+    pos_green_deriv = green_deriv.where(green_deriv > 0)
+
+    if method_sos == 'first':
+        # get the timestep where slope first becomes positive
+        # to estimate the DOY when growing season starts
+        #using the compositing method 'first'
         return first(pos_green_deriv, dim='time')
-    
-    if method_sos == 'median':  
+
+    if method_sos == 'median':
         #positive slopes on greening side
         pos_greenup = greenup.where(pos_green_deriv)
         #find the median
         median = pos_greenup.median('time')
         #distance of values from median
         distance = pos_greenup - median
-        #index where distance is minimum
+        #find index (argmin) where distance is smallest (ie this
+        #is where the median is for each pixel)
         idx = allNaN_arg(distance, 'time', 'min').astype('int16')
         return pos_greenup.isel(time=idx)
-    
+
 def _sos(vsos):
     """
-    SOS = DOY of start of season
+    SOS = DOY for start of season
     """
     return vsos.time.dt.dayofyear
 
@@ -100,12 +127,15 @@ def _veos(da, pos, method_eos='last'):
     """
     vEOS = Value at the start of season
     
-    method : If 'first' then EOS is estimated
-            as the last negative slope on the
-            senescing side of the curve. If median,
-            then EOS is estimated as the median value
-            of the negative slopes on the senescing 
-            side of the curve.
+    Params
+    -----
+    method_eos : str
+        If 'first' then vEOS is estimated
+        as the last negative slope on the
+        senescing side of the curve. If 'median',
+        then vEOS is estimated as the 'median' value
+        of the negative slopes on the senescing 
+        side of the curve.
     """
     # select timesteps before peak of season (AKA greening)
     senesce = da.where(da.time > pos.time)
@@ -113,13 +143,13 @@ def _veos(da, pos, method_eos='last'):
     senesce_deriv = senesce.differentiate('time')
     # find where the fst order slope is postive
     neg_senesce_deriv = senesce_deriv.where(senesce_deriv < 0)
-    
-    if method_eos == 'last':  
+
+    if method_eos == 'last':
         # get the timestep where slope is last negative to estimate
         # the DOY when growing season ends
         return last(neg_senesce_deriv, dim='time')
 
-    if method_eos == 'median':   
+    if method_eos == 'median':
         #negative slopes on senescing side
         neg_senesce = senesce.where(neg_senesce_deriv)
         #find medians
@@ -129,24 +159,26 @@ def _veos(da, pos, method_eos='last'):
         #index where median occurs
         idx = allNaN_arg(distance, 'time', 'min').astype('int16')
         return neg_senesce.isel(time=idx)
- 	       
+
 def _eos(veos):
     """
-    EOS = DOY of end of seasonn
+    EOS = DOY for end of seasonn
     """
     return veos.time.dt.dayofyear
 
+
 def _los(eos, sos):
     """
-    LOS = Length of season (DOY)
+    LOS = Length of season (in DOY)
     """
     return eos - sos
+
 
 def _rog(vpos, vsos, pos, sos):
     """
     ROG = Rate of Greening (Days)
     """
-    return (vpos - vsos) / (sos - pos)
+    return (vpos - vsos) / (pos - sos)
 
 
 def _ros(veos, vpos, eos, pos):
@@ -160,9 +192,10 @@ def xr_phenology(da,
                  stats=[
                      'SOS', 'POS', 'EOS', 'Trough'
                      'vSOS', 'vPOS', 'vEOS', 'LOS',
-                     'AOS', 'ROG', 'ROS'],
-                 method_sos='first',
-                 method_eos='last',
+                     'AOS', 'ROG', 'ROS'
+                 ],
+                 method_sos='median',
+                 method_eos='median',
                  interpolate=False,
                  interpolate_na=False,
                  interp_method="linear",
@@ -170,14 +203,16 @@ def xr_phenology(da,
     
     """
     Obtain land surface phenology metrics from an
-    xarray.DataArray containing a timeseries of a remote-sensinh
-    vegetation index e.g. NDVI or EVI.
+    xarray.DataArray containing a timeseries of a 
+    vegetation index like NDVI or EVI.
     
     last modified May 2020
     
     Parameters
     ----------
-    da :  xarray.Dataset
+    da :  xarray.DataArray
+        DataArray should contain a 2 or 3D time series of a
+        vegetation index like NDVI
     stats : list
         list of phenological statistics to return. Regardless of
         the metrics returned, all statistics are calculated
@@ -194,30 +229,59 @@ def xr_phenology(da,
             AOS = Amplitude of season (in value units)
             ROG = Rate of greening
             ROS = Rate of senescence
-            Skew = Skewness of growing season (NOT IMPLEMENTED YET)
-            IOS = Integral of season (SOS-EOS) (NOT IMPLEMENTED YET)
-
+    method_sos : str 
+        If 'first' then vSOS is estimated
+        as the first positive slope on the
+        greening side of the curve. If 'median',
+        then vSOS is estimated as the median value
+        of the postive slopes on the greening side
+        of the curve.
+    method_eos : str
+        If 'first' then vEOS is estimated
+        as the last negative slope on the
+        senescing side of the curve. If 'median',
+        then vEOS is estimated as the 'median' value
+        of the negative slopes on the senescing 
+        side of the curve.
+    interpolate : bool
+        Whether to interpolate the time dimension of the 
+        dataset using xarray's inbuilt .resample().interpolate()
+        methoods. This can be helpful if the timeseries has gaps.
+        Options include 'linear' or 'nearest'.
+    interpolate_na : bool
+        Whether to fill NaN values in the dataset using an interpolation
+        method. Can be used in conjunction with interpolate=True,
+        in which case the NaNs are filled before the time series
+        is interpolated. Note this can be very slow.
+    interp_method : str
+        Which method to use for the `interpolate` and `interpolate_na`
+        parameters. Options include 'linear' or 'nearest'.
+    interp_interval : str
+        The time interval to interpolate too. e.g '1D', '1W', 1M, '1Y'
+    
     Outputs
     -------
-        xarray.Dataset containing variables for the selected statistics 
+        xarray.Dataset containing variables for the selected 
+        phenology statistics 
         
     """
-    if (interpolate_na==True) & (interpolate==True):
-        print('removing NaNs')
-        da = da.interpolate_na(dim='time', method=interp_method) 
-        
-        #resample time dim and interpolate values
-        da = da.resample(time=interp_interval).interpolate(interp_method)
-        print("    Interpolated dataset to " +str(len(da.time))+ " time-steps")
-     
-    if (interpolate_na==False) & (interpolate==True):
-        da = da.resample(time=interp_interval).interpolate(interp_method)
-        print("Interpolated dataset to " +str(len(da.time))+ " time-steps")
-        
-    if (interpolate_na==True) & (interpolate==False):
+    if (interpolate_na == True) & (interpolate == True):
         print('removing NaNs')
         da = da.interpolate_na(dim='time', method=interp_method)
-   
+
+        #resample time dim and interpolate values
+        da = da.resample(time=interp_interval).interpolate(interp_method)
+        print("    Interpolated dataset to " + str(len(da.time)) +
+              " time-steps")
+
+    if (interpolate_na == False) & (interpolate == True):
+        da = da.resample(time=interp_interval).interpolate(interp_method)
+        print("Interpolated dataset to " + str(len(da.time)) + " time-steps")
+
+    if (interpolate_na == True) & (interpolate == False):
+        print('removing NaNs')
+        da = da.interpolate_na(dim='time', method=interp_method)
+
     vpos = _vpos(da)
     pos = _pos(da)
     trough = _trough(da)
@@ -260,10 +324,10 @@ def xr_phenology(da,
 # def _ios(da, sos, eos, dt_unit='D'):
 #     """
 #     IOS = Integral of season (SOS-EOS)
-        
+
 #     dt_unit : str, optional
 #             Can be used to specify the unit if datetime
-#             coordinate is used. 
+#             coordinate is used.
 #             One of {‘Y’, ‘M’, ‘W’, ‘D’, ‘h’, ‘m’,
 #             ‘s’, ‘ms’, ‘us’, ‘ns’, ‘ps’, ‘fs’, ‘as’}
 #     """
