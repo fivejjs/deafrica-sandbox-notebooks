@@ -7,6 +7,31 @@ from scipy.stats import skew
 sys.path.append('../Scripts')
 from deafrica_datahandling import first, last
 
+def allNaN_arg(xarr, dim, stat):
+    """
+    Calculate nanargmax or nanargmin.
+    
+    Deals with all-NaN slices by filling those locations
+    with an integer and then masking the offending cells.
+    
+    Value of the fillna() will never be returned as index of argmax/min
+    as fill value exceeds the min/max value of the array.
+    
+    """
+    #generate a mask where entire axis along dimension is NaN
+    mask = xarr.min(dim=dim, skipna=True).isnull()
+    
+    if stat=='max':
+        y = xarr.fillna(float(xarr.min() - 1))
+        y = y.argmax(dim=dim, skipna=True).where(~mask)
+        return y
+    
+    if stat == 'min':
+        y = xarr.fillna(float(xarr.max() + 1))
+        y = y.argmin(dim=dim, skipna=True).where(~mask)
+        return y
+
+
 def _vpos(da):
     """
     vPOS = Value at peak of season
@@ -54,15 +79,17 @@ def _vsos(da, pos, method_sos='first'):
         # the DOY when growing season starts
         return first(pos_green_deriv, dim='time')
     
-    if method_sos == 'median':
-        #grab only the increasing greening values
+    if method_sos == 'median':  
+        #positive slopes on greening side
         pos_greenup = greenup.where(pos_green_deriv)
-        # find the median "actual" value of those positive greening values
-        # (rather than the mean of the two median values for even-numbered lengths)
-        median_val = pos_greenup.quantile(0.5, dim='time', interpolation='nearest', skipna=True)
-        # find the locations that match the median value 
-        return first(pos_greenup.where(pos_greenup==median_val), dim='time')
-
+        #find the median
+        median = pos_greenup.median('time')
+        #distance of values from median
+        distance = pos_greenup - median
+        #index where distance is minimum
+        idx = allNaN_arg(distance, 'time', 'min').astype('int16')
+        return pos_greenup.isel(time=idx)
+    
 def _sos(vsos):
     """
     SOS = DOY of start of season
@@ -88,19 +115,21 @@ def _veos(da, pos, method_eos='last'):
     neg_senesce_deriv = senesce_deriv.where(senesce_deriv < 0)
     
     if method_eos == 'last':  
-        # get the timestep where slope first becomes positive to estimate
-        # the DOY when growing season starts
+        # get the timestep where slope is last negative to estimate
+        # the DOY when growing season ends
         return last(neg_senesce_deriv, dim='time')
-    
-    if method_eos == 'median':
-        #grab only the declining values
-        neg_greenup = senesce.where(neg_senesce_deriv)
-        # find the median "actual" value of those positive greening values
-        # (rather than the mean of the two median values for even-numbered lengths)
-        median_val = neg_greenup.quantile(0.5, dim='time', interpolation='nearest', skipna=True)
-        # find the locations that match the median value 
-        return last(neg_greenup.where(neg_greenup==median_val), dim='time')
 
+    if method_eos == 'median':   
+        #negative slopes on senescing side
+        neg_senesce = senesce.where(neg_senesce_deriv)
+        #find medians
+        median = neg_senesce.median('time')
+        #distance to the median
+        distance = neg_senesce - median
+        #index where median occurs
+        idx = allNaN_arg(distance, 'time', 'min').astype('int16')
+        return neg_senesce.isel(time=idx)
+ 	       
 def _eos(veos):
     """
     EOS = DOY of end of seasonn
@@ -174,20 +203,20 @@ def xr_phenology(da,
         
     """
     if (interpolate_na==True) & (interpolate==True):
+        print('removing NaNs')
         da = da.interpolate_na(dim='time', method=interp_method) 
-        print('removed NaNs')
         
         #resample time dim and interpolate values
-        da=da.resample(time=interp_interval).interpolate(interp_method)
+        da = da.resample(time=interp_interval).interpolate(interp_method)
         print("    Interpolated dataset to " +str(len(da.time))+ " time-steps")
      
     if (interpolate_na==False) & (interpolate==True):
-        da=da.resample(time=interp_interval).interpolate(interp_method)
+        da = da.resample(time=interp_interval).interpolate(interp_method)
         print("Interpolated dataset to " +str(len(da.time))+ " time-steps")
         
     if (interpolate_na==True) & (interpolate==False):
+        print('removing NaNs')
         da = da.interpolate_na(dim='time', method=interp_method)
-        print('removed NaNs')
    
     vpos = _vpos(da)
     pos = _pos(da)
