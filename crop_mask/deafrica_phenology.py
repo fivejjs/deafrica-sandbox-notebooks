@@ -167,11 +167,17 @@ def _eos(veos):
     return veos.time.dt.dayofyear
 
 
-def _los(eos, sos):
+def _los(da, eos, sos):
     """
     LOS = Length of season (in DOY)
     """
-    return eos - sos
+    los = eos - sos
+    #handle negative values
+    los = xr.where(los >= 0,
+                   los, 
+                   da.time.dt.dayofyear.values[-1] + (eos.where(los < 0) - sos.where(los < 0)))
+    
+    return los
 
 
 def _rog(vpos, vsos, pos, sos):
@@ -190,7 +196,7 @@ def _ros(veos, vpos, eos, pos):
 
 def xr_phenology(da,
                  stats=[
-                     'SOS', 'POS', 'EOS', 'Trough'
+                     'SOS', 'POS', 'EOS', 'Trough',
                      'vSOS', 'vPOS', 'vEOS', 'LOS',
                      'AOS', 'ROG', 'ROS'
                  ],
@@ -199,12 +205,12 @@ def xr_phenology(da,
                  interpolate=False,
                  interpolate_na=False,
                  interp_method="linear",
-                 interp_interval='1W'):
+                 interp_interval='2W'):
     
     """
     Obtain land surface phenology metrics from an
     xarray.DataArray containing a timeseries of a 
-    vegetation index like NDVI or EVI.
+    vegetation index like NDVI.
     
     last modified May 2020
     
@@ -246,8 +252,7 @@ def xr_phenology(da,
     interpolate : bool
         Whether to interpolate the time dimension of the 
         dataset using xarray's inbuilt .resample().interpolate()
-        methoods. This can be helpful if the timeseries has gaps.
-        Options include 'linear' or 'nearest'.
+        methods. This can be helpful if the timeseries is sparse.
     interpolate_na : bool
         Whether to fill NaN values in the dataset using an interpolation
         method. Can be used in conjunction with interpolate=True,
@@ -265,6 +270,20 @@ def xr_phenology(da,
         phenology statistics 
         
     """
+    #Check parameters before running calculations
+    if interp_method not in ('linear', 'nearest'):
+         raise ValueError("Currently only interp_methods 'nearest' and 'linear' are supported")
+            
+    if method_sos != 'median':
+        raise ValueError("Currently only method_sos 'median' is supported")
+    
+    if method_eos != 'median':
+        raise ValueError("Currently only method_eos 'median' is supported")
+            
+    # If stats supplied is not a list, convert to list.
+    stats = stats if isinstance(stats, list) else [stats]
+    
+    #Interpolate and/or fill NaNs
     if (interpolate_na == True) & (interpolate == True):
         print('removing NaNs')
         da = da.interpolate_na(dim='time', method=interp_method)
@@ -290,7 +309,7 @@ def xr_phenology(da,
     sos = _sos(vsos)
     veos = _veos(da, pos, method_eos=method_eos)
     eos = _eos(veos)
-    los = _los(eos, sos)
+    los = _los(da, eos, sos)
     rog = _rog(vpos, vsos, pos, sos)
     ros = _ros(veos, vpos, eos, pos)
 
