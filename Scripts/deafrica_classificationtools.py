@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # deafrica_classificationtools.py
 '''
 Description: This file contains a set of python functions for conducting
@@ -751,7 +750,7 @@ class KMeans_tree(ClusterMixin):
                     sample_weight[rescpy == clu] if sample_weight is not None else None))
 
         return result
-=======
+
 # deafrica_classificationtools.py
 '''
 Description: This file contains a set of python functions for conducting
@@ -1503,4 +1502,4 @@ class KMeans_tree(ClusterMixin):
                     sample_weight[rescpy == clu] if sample_weight is not None else None))
 
         return result
->>>>>>> master
+
