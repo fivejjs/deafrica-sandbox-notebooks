@@ -2,29 +2,30 @@
 """
 This script contains functions for calculating land-surface 
 phenology metrics on a time series of a vegetations index
-stored within an xarray.DataArray.  
-
+stored within an xarray.DataArray.
+----------  
+TO DO:
+- implement xr.polyfit once xarray releases version 0.16
+- Handle dask arrays once xarray releases version 0.16
+- Implement intergal-of-season statistic
 """
 
 
 import sys
+import dask
 import numpy as np
 import xarray as xr
-from scipy.stats import skew
 sys.path.append('../Scripts')
 from deafrica_datahandling import first, last
-
 
 def allNaN_arg(xarr, dim, stat):
     """
     Calculate da.argmax() or da.argmin() while handling
     all-NaN slices. Fills all-NaN locations with an
     integer and then masks the offending cells.
-    
     Value of the fill_na() will never be returned as index 
     of argmax/min as fill value exceeds the min/max
     value of the array.
-    
     Params
     ------
     xarr : xarray.DataArray
@@ -33,13 +34,11 @@ def allNaN_arg(xarr, dim, stat):
     stat : str,
         The statistic to calculte, either 'min' for argmin()
         or 'max' for .argmax()
-    
     Returns
     ------
     xarray.DataArray
-    
     """
-    #generate a mask where entire axis along dimension is NaN
+    # generate a mask where entire axis along dimension is NaN
     mask = xarr.min(dim=dim, skipna=True).isnull()
 
     if stat == 'max':
@@ -52,11 +51,13 @@ def allNaN_arg(xarr, dim, stat):
         y = y.argmin(dim=dim, skipna=True).where(~mask)
         return y
 
+
 def _vpos(da):
     """
     vPOS = Value at peak of season
     """
     return da.max('time')
+
 
 def _pos(da):
     """
@@ -64,11 +65,13 @@ def _pos(da):
     """
     return da.isel(time=da.argmax('time')).time.dt.dayofyear
 
+
 def _trough(da):
     """
     Trough = Minimum value
     """
     return da.min('time')
+
 
 def _aos(vpos, trough):
     """
@@ -76,10 +79,10 @@ def _aos(vpos, trough):
     """
     return vpos - trough
 
+
 def _vsos(da, pos, method_sos='first'):
     """
     vSOS = Value at the start of season
-    
     Params
     -----
     da : xarray.DataArray
@@ -90,7 +93,6 @@ def _vsos(da, pos, method_sos='first'):
         then vSOS is estimated as the median value
         of the postive slopes on the greening side
         of the curve.
-        
     """
     # select timesteps before peak of season (AKA greening)
     greenup = da.where(da.time < pos.time)
@@ -102,19 +104,19 @@ def _vsos(da, pos, method_sos='first'):
     if method_sos == 'first':
         # get the timestep where slope first becomes positive
         # to estimate the DOY when growing season starts
-        #using the compositing method 'first'
+        # using the compositing method 'first'
         return first(pos_green_deriv, dim='time')
 
     if method_sos == 'median':
-        #positive slopes on greening side
+        # positive slopes on greening side
         pos_greenup = greenup.where(pos_green_deriv)
-        #find the median
+        # find the median
         median = pos_greenup.median('time')
-        #distance of values from median
+        # distance of values from median
         distance = pos_greenup - median
-        #find index (argmin) where distance is smallest (ie this
-        #is where the median is for each pixel)
-        idx = allNaN_arg(distance, 'time', 'min').astype('int16')
+        # find index (argmin) where distance is smallest (ie this
+        # is where the median is for each pixel), use absolute values
+        idx = allNaN_arg(xr.ufuncs.fabs(distance), 'time', 'min').astype('int16')
         return pos_greenup.isel(time=idx)
 
 def _sos(vsos):
@@ -123,10 +125,10 @@ def _sos(vsos):
     """
     return vsos.time.dt.dayofyear
 
+
 def _veos(da, pos, method_eos='last'):
     """
     vEOS = Value at the start of season
-    
     Params
     -----
     method_eos : str
@@ -150,15 +152,16 @@ def _veos(da, pos, method_eos='last'):
         return last(neg_senesce_deriv, dim='time')
 
     if method_eos == 'median':
-        #negative slopes on senescing side
+        # negative slopes on senescing side
         neg_senesce = senesce.where(neg_senesce_deriv)
-        #find medians
+        # find medians
         median = neg_senesce.median('time')
-        #distance to the median
+        # distance to the median
         distance = neg_senesce - median
-        #index where median occurs
-        idx = allNaN_arg(distance, 'time', 'min').astype('int16')
+        # index where median occurs
+        idx = allNaN_arg(xr.ufuncs.fabs(distance), 'time', 'min').astype('int16')
         return neg_senesce.isel(time=idx)
+
 
 def _eos(veos):
     """
@@ -172,11 +175,13 @@ def _los(da, eos, sos):
     LOS = Length of season (in DOY)
     """
     los = eos - sos
-    #handle negative values
-    los = xr.where(los >= 0,
-                   los, 
-                   da.time.dt.dayofyear.values[-1] + (eos.where(los < 0) - sos.where(los < 0)))
-    
+    # handle negative values
+    los = xr.where(
+        los >= 0,
+        los, 
+        da.time.dt.dayofyear.values[-1] +
+        (eos.where(los < 0) - sos.where(los < 0)))
+
     return los
 
 
@@ -196,24 +201,23 @@ def _ros(veos, vpos, eos, pos):
 
 def xr_phenology(da,
                  stats=[
-                     'SOS', 'POS', 'EOS', 'Trough',
-                     'vSOS', 'vPOS', 'vEOS', 'LOS',
-                     'AOS', 'ROG', 'ROS'
+                     'SOS', 'POS', 'EOS', 'Trough', 'vSOS', 
+                     'vPOS', 'vEOS', 'LOS', 'AOS', 'ROG', 'ROS'
                  ],
                  method_sos='median',
                  method_eos='median',
+                 interpolate_na = False,
                  interpolate=False,
-                 interpolate_na=False,
-                 interp_method="linear",
-                 interp_interval='2W'):
+                 rolling_mean = None,
+                 interp_method='linear',
+                 interp_interval='2W'
+                 ):
     
     """
     Obtain land surface phenology metrics from an
     xarray.DataArray containing a timeseries of a 
     vegetation index like NDVI.
-    
     last modified May 2020
-    
     Parameters
     ----------
     da :  xarray.DataArray
@@ -263,43 +267,52 @@ def xr_phenology(da,
         parameters. Options include 'linear' or 'nearest'.
     interp_interval : str
         The time interval to interpolate too. e.g '1D', '1W', 1M, '1Y'
-    
+    rolling_mean : int
+        Whether to calulate a rolling average across the timeseries in order
+        to smooth out the timeseries. 'rolling_mean' should be set
+        to an integer that represents the length of the rolling window,
+        e.g. rolling_mean = 4 will calculate a rolling mean over a window
+        4 time-steps long.
     Outputs
     -------
         xarray.Dataset containing variables for the selected 
         phenology statistics 
-        
+    
     """
-    #Check parameters before running calculations
-    if interp_method not in ('linear', 'nearest'):
-         raise ValueError("Currently only interp_methods 'nearest' and 'linear' are supported")
-            
+    # Check inputs before running calculations
+    if dask.is_dask_collection(da):
+        raise TypeError(
+            " Dask arrays are not currently supported by this function, "+
+            "run da.compute() before passing dataArray."
+        ) 
+
     if method_sos != 'median':
         raise ValueError("Currently only method_sos 'median' is supported")
-    
+
     if method_eos != 'median':
         raise ValueError("Currently only method_eos 'median' is supported")
-            
+    
+    if interp_method not in ('linear', 'nearest'):
+            raise ValueError(
+                "Currently only interp_methods 'nearest' and 'linear' are supported"
+            )
+    
     # If stats supplied is not a list, convert to list.
     stats = stats if isinstance(stats, list) else [stats]
     
-    #Interpolate and/or fill NaNs
-    if (interpolate_na == True) & (interpolate == True):
+    # Interpolate, fill NaNs, and/or caulctae rolling mean
+    if interpolate_na:
         print('removing NaNs')
         da = da.interpolate_na(dim='time', method=interp_method)
-
-        #resample time dim and interpolate values
+    
+    if interpolate:
         da = da.resample(time=interp_interval).interpolate(interp_method)
         print("    Interpolated dataset to " + str(len(da.time)) +
               " time-steps")
-
-    if (interpolate_na == False) & (interpolate == True):
-        da = da.resample(time=interp_interval).interpolate(interp_method)
-        print("Interpolated dataset to " + str(len(da.time)) + " time-steps")
-
-    if (interpolate_na == True) & (interpolate == False):
-        print('removing NaNs')
-        da = da.interpolate_na(dim='time', method=interp_method)
+        
+    if rolling_mean is not None:
+        print('     Calculating rolling mean using '+str(rolling_mean)+ " time-steps" )
+        da = da.rolling(time=rolling_mean, min_periods=1).mean()
 
     vpos = _vpos(da)
     pos = _pos(da)
@@ -328,37 +341,12 @@ def xr_phenology(da,
         'ROS': ros,
     }
 
-    #intialise dataset with first statistic
+    # intialise dataset with first statistic
     ds = stats_dict[stats[0]].to_dataset(name=stats[0])
 
-    #add the other stats to the dataset
+    # add the other stats to the dataset
     for stat in stats[1:]:
         stats_keep = stats_dict.get(stat)
         ds[stat] = stats_dict[stat]
 
     return ds
-
-
-#STATS TO BE IMPLEMENTED
-# def _ios(da, sos, eos, dt_unit='D'):
-#     """
-#     IOS = Integral of season (SOS-EOS)
-
-#     dt_unit : str, optional
-#             Can be used to specify the unit if datetime
-#             coordinate is used.
-#             One of {‘Y’, ‘M’, ‘W’, ‘D’, ‘h’, ‘m’,
-#             ‘s’, ‘ms’, ‘us’, ‘ns’, ‘ps’, ‘fs’, ‘as’}
-#     """
-#     season = da.where((ndvi.time > sos.time) & (ndvi.time < eos.time))
-#     return season.integrate(dim='time', datetime_unit=dt_unit)
-
-# def _skew(da, sos, eos):
-#     """
-#     skew= skewness of growing season (SOS to EOS)
-#     """
-#     season = da.where((ndvi.time > sos.time) & (ndvi.time < eos.time))
-#     return xr.apply_ufunc(skew,
-#                           season,
-#                           input_core_dims=[["time"]],
-#                           dask='allowed')
