@@ -63,7 +63,8 @@ def _pos(da):
     """
     POS = DOY of peak of season
     """
-    return da.isel(time=da.argmax('time')).time.dt.dayofyear
+    return da.isel(time=allNaN_arg(da, 'time', 'max')).time.dt.dayofyear
+#     return da.isel(time=da.argmax('time')).time.dt.dayofyear
 
 
 def _trough(da):
@@ -100,24 +101,23 @@ def _vsos(da, pos, method_sos='first'):
     green_deriv = greenup.differentiate('time')
     # find where the first order slope is postive
     pos_green_deriv = green_deriv.where(green_deriv > 0)
+    # positive slopes on greening side
+    pos_greenup = greenup.where(pos_green_deriv)
+    # find the median
+    median = pos_greenup.median('time')
+    # distance of values from median
+    distance = pos_greenup - median
 
     if method_sos == 'first':
-        # get the timestep where slope first becomes positive
-        # to estimate the DOY when growing season starts
-        # using the compositing method 'first'
-        return first(pos_green_deriv, dim='time')
+        # find index (argmin) where distance is most negative
+        idx = allNaN_arg(distance, 'time', 'min').astype('int16')
 
     if method_sos == 'median':
-        # positive slopes on greening side
-        pos_greenup = greenup.where(pos_green_deriv)
-        # find the median
-        median = pos_greenup.median('time')
-        # distance of values from median
-        distance = pos_greenup - median
-        # find index (argmin) where distance is smallest (ie this
-        # is where the median is for each pixel), use absolute values
+        # find index (argmin) where distance is smallest absolute values
         idx = allNaN_arg(xr.ufuncs.fabs(distance), 'time', 'min').astype('int16')
-        return pos_greenup.isel(time=idx)
+    
+    return pos_greenup.isel(time=idx)
+
 
 def _sos(vsos):
     """
@@ -145,22 +145,22 @@ def _veos(da, pos, method_eos='last'):
     senesce_deriv = senesce.differentiate('time')
     # find where the fst order slope is postive
     neg_senesce_deriv = senesce_deriv.where(senesce_deriv < 0)
+    # negative slopes on senescing side
+    neg_senesce = senesce.where(neg_senesce_deriv)
+    # find medians
+    median = neg_senesce.median('time')
+    # distance to the median
+    distance = neg_senesce - median
 
     if method_eos == 'last':
-        # get the timestep where slope is last negative to estimate
-        # the DOY when growing season ends
-        return last(neg_senesce_deriv, dim='time')
+        # index where last negative slope occurs
+        idx = allNaN_arg(distance, 'time', 'min').astype('int16')
 
     if method_eos == 'median':
-        # negative slopes on senescing side
-        neg_senesce = senesce.where(neg_senesce_deriv)
-        # find medians
-        median = neg_senesce.median('time')
-        # distance to the median
-        distance = neg_senesce - median
         # index where median occurs
         idx = allNaN_arg(xr.ufuncs.fabs(distance), 'time', 'min').astype('int16')
-        return neg_senesce.isel(time=idx)
+    
+    return neg_senesce.isel(time=idx)
 
 
 def _eos(veos):
@@ -282,15 +282,15 @@ def xr_phenology(da,
     # Check inputs before running calculations
     if dask.is_dask_collection(da):
         raise TypeError(
-            " Dask arrays are not currently supported by this function, "+
+            "Dask arrays are not currently supported by this function, "+
             "run da.compute() before passing dataArray."
         ) 
 
-    if method_sos != 'median':
-        raise ValueError("Currently only method_sos 'median' is supported")
+    if method_sos not in ('median', 'first'):
+        raise ValueError("method_sos should be either 'median' or 'first'")
 
-    if method_eos != 'median':
-        raise ValueError("Currently only method_eos 'median' is supported")
+    if method_eos not in ('median', 'last'):
+        raise ValueError("method_eos should be either 'median' or 'last'")
     
     if interp_method not in ('linear', 'nearest'):
             raise ValueError(
@@ -328,17 +328,17 @@ def xr_phenology(da,
 
     # Dictionary containing the statistics
     stats_dict = {
-        'SOS': sos,
-        'EOS': eos,
-        'vSOS': vsos,
-        'vPOS': vpos,
-        'Trough': trough,
-        'POS': pos,
-        'vEOS': veos,
-        'LOS': los,
-        'AOS': aos,
-        'ROG': rog,
-        'ROS': ros,
+        'SOS': sos.astype(np.int16),
+        'EOS': eos.astype(np.int16),
+        'vSOS': vsos.astype(np.float32),
+        'vPOS': vpos.astype(np.float32),
+        'Trough': trough.astype(np.float32),
+        'POS': pos.astype(np.int16),
+        'vEOS': veos.astype(np.float32),
+        'LOS': los.astype(np.int16),
+        'AOS': aos.astype(np.float32),
+        'ROG': rog.astype(np.float32),
+        'ROS': ros.astype(np.float32),
     }
 
     # intialise dataset with first statistic
