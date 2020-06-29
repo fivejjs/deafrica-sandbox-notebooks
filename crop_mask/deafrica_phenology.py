@@ -15,17 +15,16 @@ import sys
 import dask
 import numpy as np
 import xarray as xr
+from hdstats import fast_completion, smooth
 sys.path.append('../Scripts')
 from deafrica_datahandling import first, last
 
-def allNaN_arg(xarr, dim, stat):
+def allNaN_arg(da, dim, stat):
     """
     Calculate da.argmax() or da.argmin() while handling
     all-NaN slices. Fills all-NaN locations with an
-    integer and then masks the offending cells.
-    Value of the fill_na() will never be returned as index 
-    of argmax/min as fill value exceeds the min/max
-    value of the array.
+    float and then masks the offending cells.
+
     Params
     ------
     xarr : xarray.DataArray
@@ -39,18 +38,17 @@ def allNaN_arg(xarr, dim, stat):
     xarray.DataArray
     """
     # generate a mask where entire axis along dimension is NaN
-    mask = xarr.min(dim=dim, skipna=True).isnull()
+    mask = da.isnull().all(dim)
 
     if stat == 'max':
-        y = xarr.fillna(float(xarr.min() - 1))
+        y = da.fillna(float(da.min() - 1))
         y = y.argmax(dim=dim, skipna=True).where(~mask)
         return y
 
     if stat == 'min':
-        y = xarr.fillna(float(xarr.max() + 1))
+        y = da.fillna(float(da.max() + 1))
         y = y.argmin(dim=dim, skipna=True).where(~mask)
         return y
-
 
 def _vpos(da):
     """
@@ -62,9 +60,8 @@ def _vpos(da):
 def _pos(da):
     """
     POS = DOY of peak of season
-    """
-    return da.isel(time=allNaN_arg(da, 'time', 'max')).time.dt.dayofyear
-#     return da.isel(time=da.argmax('time')).time.dt.dayofyear
+    """ 
+    return da.isel(time=da.argmax('time')).time.dt.dayofyear
 
 
 def _trough(da):
@@ -107,13 +104,13 @@ def _vsos(da, pos, method_sos='first'):
     median = pos_greenup.median('time')
     # distance of values from median
     distance = pos_greenup - median
-
+    
     if method_sos == 'first':
         # find index (argmin) where distance is most negative
         idx = allNaN_arg(distance, 'time', 'min').astype('int16')
 
     if method_sos == 'median':
-        # find index (argmin) where distance is smallest absolute values
+        # find index (argmin) where distance is smallest absolute value
         idx = allNaN_arg(xr.ufuncs.fabs(distance), 'time', 'min').astype('int16')
     
     return pos_greenup.isel(time=idx)
@@ -155,7 +152,7 @@ def _veos(da, pos, method_eos='last'):
     if method_eos == 'last':
         # index where last negative slope occurs
         idx = allNaN_arg(distance, 'time', 'min').astype('int16')
-
+    
     if method_eos == 'median':
         # index where median occurs
         idx = allNaN_arg(xr.ufuncs.fabs(distance), 'time', 'min').astype('int16')
@@ -206,11 +203,7 @@ def xr_phenology(da,
                  ],
                  method_sos='median',
                  method_eos='median',
-                 interpolate_na = False,
-                 interpolate=False,
-                 rolling_mean = None,
-                 interp_method='linear',
-                 interp_interval='2W'
+                 complete_smooth=True,
                  ):
     
     """
@@ -253,26 +246,11 @@ def xr_phenology(da,
         then vEOS is estimated as the 'median' value
         of the negative slopes on the senescing 
         side of the curve.
-    interpolate : bool
-        Whether to interpolate the time dimension of the 
-        dataset using xarray's inbuilt .resample().interpolate()
-        methods. This can be helpful if the timeseries is sparse.
-    interpolate_na : bool
-        Whether to fill NaN values in the dataset using an interpolation
-        method. Can be used in conjunction with interpolate=True,
-        in which case the NaNs are filled before the time series
-        is interpolated. Note this can be very slow.
-    interp_method : str
-        Which method to use for the `interpolate` and `interpolate_na`
-        parameters. Options include 'linear' or 'nearest'.
-    interp_interval : str
-        The time interval to interpolate too. e.g '1D', '1W', 1M, '1Y'
-    rolling_mean : int
-        Whether to calulate a rolling average across the timeseries in order
-        to smooth out the timeseries. 'rolling_mean' should be set
-        to an integer that represents the length of the rolling window,
-        e.g. rolling_mean = 4 will calculate a rolling mean over a window
-        4 time-steps long.
+    complete_smooth : bool
+        If True, the timeseries will be completed (gap filled) using
+        hdstats.fast_completion, and smoothed using
+        hdstats.smooth.
+    
     Outputs
     -------
         xarray.Dataset containing variables for the selected 
@@ -292,28 +270,33 @@ def xr_phenology(da,
     if method_eos not in ('median', 'last'):
         raise ValueError("method_eos should be either 'median' or 'last'")
     
-    if interp_method not in ('linear', 'nearest'):
-            raise ValueError(
-                "Currently only interp_methods 'nearest' and 'linear' are supported"
-            )
-    
     # If stats supplied is not a list, convert to list.
     stats = stats if isinstance(stats, list) else [stats]
     
-    # Interpolate, fill NaNs, and/or caulctae rolling mean
-    if interpolate_na:
-        print('removing NaNs')
-        da = da.interpolate_na(dim='time', method=interp_method)
+    # complete and smooth the timeseries
+    if complete_smooth:
+        #grab coords etc
+        x,y,time,attrs=da.x, da.y, da.time,da.attrs
+        #reshape to satisfy function
+        da = da.transpose('y', 'x', 'time').values
+        #complete timeseries
+        print('Completing...')
+        da = fast_completion(da)
+        #smooth using weiner filter
+        print('   Smoothing...')
+        da = smooth(da)
+        #place back into xarray
+        da = xr.DataArray(da,
+                          attrs=attrs,
+                          coords={'x':x, 'y':y, 'time':time},
+                          dims=['y', 'x', 'time'])
     
-    if interpolate:
-        da = da.resample(time=interp_interval).interpolate(interp_method)
-        print("    Interpolated dataset to " + str(len(da.time)) +
-              " time-steps")
-        
-    if rolling_mean is not None:
-        print('     Calculating rolling mean using '+str(rolling_mean)+ " time-steps" )
-        da = da.rolling(time=rolling_mean, min_periods=1).mean()
-
+    #remove any remaining all-NaN pixels 
+    mask = da.isnull().all('time')
+    da = da.where(~mask, other=0)
+    
+    #calculate the statistics
+    print('      Calculating phenology...')
     vpos = _vpos(da)
     pos = _pos(da)
     trough = _trough(da)
