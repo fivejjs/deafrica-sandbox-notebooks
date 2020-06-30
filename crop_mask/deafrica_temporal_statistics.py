@@ -15,7 +15,7 @@ import sys
 import dask
 import numpy as np
 import xarray as xr
-from hdstats import fast_completion, smooth
+import hdstats
 sys.path.append('../Scripts')
 from deafrica_datahandling import first, last
 
@@ -281,10 +281,10 @@ def xr_phenology(da,
         da = da.transpose('y', 'x', 'time').values
         #complete timeseries
         print('Completing...')
-        da = fast_completion(da)
+        da = hdstats.fast_completion(da)
         #smooth using weiner filter
         print('   Smoothing...')
-        da = smooth(da)
+        da = hdstats.smooth(da)
         #place back into xarray
         da = xr.DataArray(da,
                           attrs=attrs,
@@ -296,7 +296,7 @@ def xr_phenology(da,
     da = da.where(~mask, other=0)
     
     #calculate the statistics
-    print('      Calculating phenology...')
+    print('      Phenology...')
     vpos = _vpos(da)
     pos = _pos(da)
     trough = _trough(da)
@@ -333,3 +333,58 @@ def xr_phenology(da,
         ds[stat] = stats_dict[stat]
 
     return ds
+
+
+def temporal_statistics(da,
+                        stats=None): 
+    
+    #grab all the attributes of the xarray
+    x,y,time,attrs=da.x, da.y, da.time,da.attrs
+    
+    #reshape to satisfy functions
+    da = da.transpose('y', 'x', 'time').values
+    
+    #complete timeseries
+    print('Completing...')
+    da = hdstats.fast_completion(da)
+    print('here')
+    stats_dict = {
+        'f_std' : lambda da: hdstats.fourier_std(da, n=1, step=5),
+        'f_mean' : lambda da: hdstats.fourier_mean(da, n=1, step=5),
+        'f_median' : lambda da: hdstats.fourier_median(da, n=1, step=5),
+        'mean_change' : lambda da: hdstats.mean_change(da),
+        'med_change' : lambda da: hdstats.median_change(da),
+        'abs_change' : lambda da: hdstats.mean_abs_change(da),
+        'complexity' : lambda da: hdstats.complexity(da),
+        'symmetry' : lambda da: hdstats.symmetry(da),
+        'central_diff' : lambda da: hdstats.mean_central_diff(da),
+        'num_peaks' : lambda da: hdstats.number_peaks(da, 10)
+    }
+    
+    # If stats supplied is not a list, convert to list.
+    stats = stats if isinstance(stats, list) else [stats]
+
+    #intialise dataset with first statistic and
+    print('   Statistics...')
+    first_func = stats_dict.get(str(stats[0]))
+    ds = first_func(da)
+    
+    #convert back to xarray dataset
+    ds = xr.DataArray(ds,
+                      attrs=attrs,
+                      coords={'x':x, 'y':y},
+                      dims=['y', 'x'])
+    
+    ds = ds.to_dataset(name=stats[0])
+    
+    for stat in stats[1:]:
+        print(stat)
+        # Select an index function from the dictionary
+        stat_func = stats_dict.get(str(stat))
+        ds[stat] = xr.DataArray(stat_func(da),
+                      attrs=attrs,
+                      coords={'x':x, 'y':y},
+                      dims=['y', 'x'])
+    
+    return ds
+    
