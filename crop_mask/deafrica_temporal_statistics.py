@@ -383,15 +383,9 @@ def temporal_statistics(da, stats):
 
     stats_dict = {
         'discordance' : lambda da : hdstats.discordance(da, n=10),
-        'f_std_n1' : lambda da: hdstats.fourier_std(da, n=3, step=5)[:,:,0],
-        'f_std_n2' : lambda da: hdstats.fourier_std(da, n=3, step=5)[:,:,1],
-        'f_std_n3' : lambda da: hdstats.fourier_std(da, n=3, step=5)[:,:,2],
-        'f_mean_n1' : lambda da: hdstats.fourier_mean(da, n=3, step=5)[:,:,0],
-        'f_mean_n2' : lambda da: hdstats.fourier_mean(da, n=3, step=5)[:,:,1],
-        'f_mean_n3' : lambda da: hdstats.fourier_mean(da, n=3, step=5)[:,:,2],
-        'f_median_n1' : lambda da: hdstats.fourier_median(da, n=3, step=5)[:,:,0],
-        'f_median_n2' : lambda da: hdstats.fourier_median(da, n=3, step=5)[:,:,1],
-        'f_median_n3' : lambda da: hdstats.fourier_median(da, n=3, step=5)[:,:,2],
+        'f_std' : lambda da: hdstats.fourier_std(da, n=3, step=5),
+        'f_mean' : lambda da: hdstats.fourier_mean(da, n=3, step=5),
+        'f_median' : lambda da: hdstats.fourier_median(da, n=3, step=5),
         'mean_change' : lambda da: hdstats.mean_change(da),
         'median_change' : lambda da: hdstats.median_change(da),
         'abs_change' : lambda da: hdstats.mean_abs_change(da),
@@ -417,13 +411,28 @@ def temporal_statistics(da, stats):
 
     for stat in stats[1:]:
         print("      "+stat)
-
-        # Select an index function from the dictionary
-        stat_func = stats_dict.get(str(stat))
-        ds[stat] = xr.DataArray(stat_func(da),
-                      attrs=attrs,
-                      coords={'x':x, 'y':y},
-                      dims=['y', 'x'])
+        
+        #handle the fourier transform examples
+        if stat in ('f_std', 'f_median', 'f_mean'):
+            stat_func = stats_dict.get(str(stat))
+            zz = stat_func(da)
+            n1 = zz[:,:,0]
+            n2 = zz[:,:,1]
+            n3 = zz[:,:,2]
+            
+            for i, j in zip([n1, n2, n3], ['n1', 'n2', 'n3']):
+                ds[stat+'_'+j] = xr.DataArray(i,
+                                          attrs=attrs,
+                                          coords={'x':x, 'y':y},
+                                          dims=['y', 'x'])
+            
+        else:
+            # Select an stats function from the dictionary
+            stat_func = stats_dict.get(str(stat))
+            ds[stat] = xr.DataArray(stat_func(da),
+                          attrs=attrs,
+                          coords={'x':x, 'y':y},
+                          dims=['y', 'x'])
 
     return ds
     
