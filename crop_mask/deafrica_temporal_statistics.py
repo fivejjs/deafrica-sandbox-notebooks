@@ -210,7 +210,8 @@ def xr_phenology(da,
     Obtain land surface phenology metrics from an
     xarray.DataArray containing a timeseries of a 
     vegetation index like NDVI.
-    last modified May 2020
+    last modified June 2020
+    
     Parameters
     ----------
     da :  xarray.DataArray
@@ -335,56 +336,87 @@ def xr_phenology(da,
     return ds
 
 
-def temporal_statistics(da,
-                        stats=None): 
+def temporal_statistics(da, stats):
+    """
+    Obtain temporal statistics using the hdstats temporal
+    library:
+    https://github.com/daleroberts/hdstats/blob/master/hdstats/ts.pyx
     
+    last modified June 2020
+    
+    Parameters
+    ----------
+    da :  xarray.DataArray
+        DataArray should contain a 3D time series of a
+        vegetation index like NDVI
+    stats : list
+        list of temporal statistics to calculate.
+        Options include:
+            discordance
+            f_std
+            f_mean
+            f_median
+            mean_change
+            median_change
+            abs_change 
+            complexity
+            central_diff
+            num_peaks
+    
+    Outputs
+    -------
+        xarray.Dataset containing variables for the selected 
+        temporal statistics 
+        
+    """
+
     #grab all the attributes of the xarray
     x,y,time,attrs=da.x, da.y, da.time,da.attrs
-    
+
     #reshape to satisfy functions
     da = da.transpose('y', 'x', 'time').values
-    
+
     #complete timeseries
     print('Completing...')
     da = hdstats.fast_completion(da)
-    print('here')
+
     stats_dict = {
-        'f_std' : lambda da: hdstats.fourier_std(da, n=1, step=5),
-        'f_mean' : lambda da: hdstats.fourier_mean(da, n=1, step=5),
-        'f_median' : lambda da: hdstats.fourier_median(da, n=1, step=5),
+        'discordance' : lambda da : hdstats.discordance(da, n=10),
+        'f_std' : lambda da: hdstats.fourier_std(da, n=1, step=5).squeeze(),
+        'f_mean' : lambda da: hdstats.fourier_mean(da, n=1, step=5).squeeze(),
+        'f_median' : lambda da: hdstats.fourier_median(da, n=1, step=5).squeeze(),
         'mean_change' : lambda da: hdstats.mean_change(da),
-        'med_change' : lambda da: hdstats.median_change(da),
+        'median_change' : lambda da: hdstats.median_change(da),
         'abs_change' : lambda da: hdstats.mean_abs_change(da),
         'complexity' : lambda da: hdstats.complexity(da),
-        'symmetry' : lambda da: hdstats.symmetry(da),
         'central_diff' : lambda da: hdstats.mean_central_diff(da),
         'num_peaks' : lambda da: hdstats.number_peaks(da, 10)
     }
-    
+
     # If stats supplied is not a list, convert to list.
     stats = stats if isinstance(stats, list) else [stats]
 
     #intialise dataset with first statistic and
-    print('   Statistics...')
+    print('   Statistics:')
     first_func = stats_dict.get(str(stats[0]))
+    print("      "+stats[0])
     ds = first_func(da)
-    
+
     #convert back to xarray dataset
     ds = xr.DataArray(ds,
                       attrs=attrs,
                       coords={'x':x, 'y':y},
-                      dims=['y', 'x'])
-    
-    ds = ds.to_dataset(name=stats[0])
-    
+                      dims=['y', 'x']).to_dataset(name=stats[0])
+
     for stat in stats[1:]:
-        print(stat)
+        print("      "+stat)
+
         # Select an index function from the dictionary
         stat_func = stats_dict.get(str(stat))
         ds[stat] = xr.DataArray(stat_func(da),
                       attrs=attrs,
                       coords={'x':x, 'y':y},
                       dims=['y', 'x'])
-    
+
     return ds
     
