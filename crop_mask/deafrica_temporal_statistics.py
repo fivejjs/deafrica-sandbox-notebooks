@@ -337,6 +337,7 @@ def xr_phenology(da,
 
 
 def temporal_statistics(da, stats):
+    
     """
     Obtain temporal statistics using the hdstats temporal
     library:
@@ -382,9 +383,15 @@ def temporal_statistics(da, stats):
 
     stats_dict = {
         'discordance' : lambda da : hdstats.discordance(da, n=10),
-        'f_std' : lambda da: hdstats.fourier_std(da, n=1, step=5).squeeze(),
-        'f_mean' : lambda da: hdstats.fourier_mean(da, n=1, step=5).squeeze(),
-        'f_median' : lambda da: hdstats.fourier_median(da, n=1, step=5).squeeze(),
+        'f_std_n1' : lambda da: hdstats.fourier_std(da, n=3, step=5)[:,:,0],
+        'f_std_n2' : lambda da: hdstats.fourier_std(da, n=3, step=5)[:,:,1],
+        'f_std_n3' : lambda da: hdstats.fourier_std(da, n=3, step=5)[:,:,2],
+        'f_mean_n1' : lambda da: hdstats.fourier_mean(da, n=3, step=5)[:,:,0],
+        'f_mean_n2' : lambda da: hdstats.fourier_mean(da, n=3, step=5)[:,:,1],
+        'f_mean_n3' : lambda da: hdstats.fourier_mean(da, n=3, step=5)[:,:,2],
+        'f_median_n1' : lambda da: hdstats.fourier_median(da, n=3, step=5)[:,:,0],
+        'f_median_n2' : lambda da: hdstats.fourier_median(da, n=3, step=5)[:,:,1],
+        'f_median_n3' : lambda da: hdstats.fourier_median(da, n=3, step=5)[:,:,2],
         'mean_change' : lambda da: hdstats.mean_change(da),
         'median_change' : lambda da: hdstats.median_change(da),
         'abs_change' : lambda da: hdstats.mean_abs_change(da),
