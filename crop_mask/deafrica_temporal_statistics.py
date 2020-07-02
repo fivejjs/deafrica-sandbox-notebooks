@@ -3,11 +3,19 @@
 This script contains functions for calculating land-surface 
 phenology metrics on a time series of a vegetations index
 stored within an xarray.DataArray.
+
+Functions:
+---------
+    allNaN_arg
+    various phenology stats
+    xr_phenology
+    temporal_statistics
+    
 ----------  
 TO DO:
-- implement xr.polyfit once xarray releases version 0.16
 - Handle dask arrays once xarray releases version 0.16
 - Implement intergal-of-season statistic
+
 """
 
 
@@ -50,6 +58,35 @@ def allNaN_arg(da, dim, stat):
         y = y.argmin(dim=dim, skipna=True).where(~mask)
         return y
 
+def fast_completion(arr):
+    """
+    gap-fill a timeseries
+    """
+    mask = np.isnan(arr)
+    idx = np.where(~mask, np.arange(mask.shape[-1]), 0)
+    np.maximum.accumulate(idx, axis=-1, out=idx)
+    i, j = np.meshgrid(
+        np.arange(idx.shape[0]), np.arange(idx.shape[1]), indexing="ij"
+    )
+    dat = arr[i[:, :, np.newaxis], j[:, :, np.newaxis], idx]
+    if np.isnan(np.sum(dat[:, :, 0])):
+        fill = np.nanmean(dat, axis=-1)
+        for t in range(dat.shape[-1]):
+            mask = np.isnan(dat[:, :, t])
+            if mask.any():
+                dat[mask, t] = fill[mask]
+            else:
+                break
+    return dat
+
+def smooth(arr, k=3):
+    """
+    Apply the scipy.signal.weiner filter
+    to a time-series
+    """
+    return wiener(arr, (1, 1, k))
+    
+    
 def _vpos(da):
     """
     vPOS = Value at peak of season
@@ -196,6 +233,7 @@ def _ros(veos, vpos, eos, pos):
     return (veos - vpos) / (eos - pos)
 
 
+
 def xr_phenology(da,
                  stats=[
                      'SOS', 'POS', 'EOS', 'Trough', 'vSOS', 
@@ -203,7 +241,7 @@ def xr_phenology(da,
                  ],
                  method_sos='median',
                  method_eos='median',
-                 complete_smooth=True,
+                 smooth = None
                  ):
     
     """
@@ -247,10 +285,14 @@ def xr_phenology(da,
         then vEOS is estimated as the 'median' value
         of the negative slopes on the senescing 
         side of the curve.
-    complete_smooth : bool
+    complete : bool
         If True, the timeseries will be completed (gap filled) using
-        hdstats.fast_completion, and smoothed using
-        hdstats.smooth.
+        hdstats.fast_completion
+    smooth : str
+        If 'weiner', the timeseries will be smoothed using the
+        scipy.signal.weiner filter with a window size of 3.  If 'rolling_mean', 
+        then timeseries is smoothed using a rolling mean with a window size of 3
+        
     
     Outputs
     -------
@@ -274,24 +316,42 @@ def xr_phenology(da,
     # If stats supplied is not a list, convert to list.
     stats = stats if isinstance(stats, list) else [stats]
     
-    # complete and smooth the timeseries
-    if complete_smooth:
-        #grab coords etc
-        x,y,time,attrs=da.x, da.y, da.time,da.attrs
-        #reshape to satisfy function
-        da = da.transpose('y', 'x', 'time').values
-        #complete timeseries
-        print('Completing...')
-        da = hdstats.fast_completion(da)
-        #smooth using weiner filter
-        print('   Smoothing...')
-        da = hdstats.smooth(da)
-        #place back into xarray
-        da = xr.DataArray(da,
+    # complete the timeseries (remove NaNs)
+    #grab coords etc
+    x,y,time,attrs=da.x, da.y, da.time,da.attrs
+    
+    #reshape to satisfy function
+    da = da.transpose('y', 'x', 'time').values
+    
+    #complete timeseries
+    print('Completing...')
+    da = fast_completion(da)
+    
+    if smooth is not None:
+        
+        if smooth == 'rolling_mean':
+            print('   Smoothing with rolling mean...')
+            da = xr.DataArray(da,
                           attrs=attrs,
                           coords={'x':x, 'y':y, 'time':time},
                           dims=['y', 'x', 'time'])
-    
+            
+            da = da.rolling(time=3, min_periods=1).mean()
+            
+        if smooth == 'weiner':       
+            print('   Smoothing with weiner filter...')
+            da = smooth(da)
+            #place back into xarray
+            da = xr.DataArray(da,
+                              attrs=attrs,
+                              coords={'x':x, 'y':y, 'time':time},
+                              dims=['y', 'x', 'time'])
+    else:
+        da = xr.DataArray(da,
+                              attrs=attrs,
+                              coords={'x':x, 'y':y, 'time':time},
+                              dims=['y', 'x', 'time'])
+        
     #remove any remaining all-NaN pixels 
     mask = da.isnull().all('time')
     da = da.where(~mask, other=0)
@@ -330,6 +390,7 @@ def xr_phenology(da,
 
     # add the other stats to the dataset
     for stat in stats[1:]:
+        print("         "+stat)
         stats_keep = stats_dict.get(stat)
         ds[stat] = stats_dict[stat]
 
@@ -353,16 +414,20 @@ def temporal_statistics(da, stats):
     stats : list
         list of temporal statistics to calculate.
         Options include:
-            discordance
-            f_std
-            f_mean
-            f_median
-            mean_change
-            median_change
-            abs_change 
-            complexity
-            central_diff
-            num_peaks
+            'discordance' : 
+            'f_std' : std of discrete fourier transform coefficients, returns
+                      three layers: f_std_n1, f_std_n2, f_std_n3
+            'f_mean' : mean of discrete fourier transform coefficients, returns
+                       three layers: f_mean_n1, f_mean_n2, f_mean_n3
+            'f_median' : median of discrete fourier transform coefficients, returns
+                         three layers: f_median_n1, f_median_n2, f_median_n3
+            'mean_change' : mean of discrete difference along time dimension
+            'median_change' : median of discrete difference along time dimension
+            'abs_change' : mean of absolute discrete difference along time dimension
+            'complexity' : 
+            'central_diff' : 
+            'num_peaks' : The number of peaks in the timeseries, defined with a local
+                          window of size 10
     
     Outputs
     -------
@@ -373,13 +438,17 @@ def temporal_statistics(da, stats):
 
     #grab all the attributes of the xarray
     x,y,time,attrs=da.x, da.y, da.time,da.attrs
+    
+    #deal with any all-NaN pixels 
+    mask = da.isnull().all('time')
+    da = da.where(~mask, other=0)
 
     #reshape to satisfy functions
     da = da.transpose('y', 'x', 'time').values
 
     #complete timeseries
     print('Completing...')
-    da = hdstats.fast_completion(da)
+    da = fast_completion(da)
 
     stats_dict = {
         'discordance' : lambda da : hdstats.discordance(da, n=10),
@@ -396,19 +465,43 @@ def temporal_statistics(da, stats):
 
     # If stats supplied is not a list, convert to list.
     stats = stats if isinstance(stats, list) else [stats]
-
-    #intialise dataset with first statistic and
+    
     print('   Statistics:')
-    first_func = stats_dict.get(str(stats[0]))
-    print("      "+stats[0])
-    ds = first_func(da)
+    #if one of the fourier functions is first (or only)
+    # stat in the list then we need to deal with this
+    if stats[0] in ('f_std', 'f_median', 'f_mean'):
+        print("      "+stats[0])
+        stat_func = stats_dict.get(str(stats[0]))
+        zz = stat_func(da)
+        n1 = zz[:,:,0]
+        n2 = zz[:,:,1]
+        n3 = zz[:,:,2]
 
-    #convert back to xarray dataset
-    ds = xr.DataArray(ds,
-                      attrs=attrs,
-                      coords={'x':x, 'y':y},
-                      dims=['y', 'x']).to_dataset(name=stats[0])
+        #intialise dataset with first statistic
+        ds = xr.DataArray(n1,
+                  attrs=attrs,
+                  coords={'x':x, 'y':y},
+                  dims=['y', 'x']).to_dataset(name=stats[0]+'_n1')
 
+        #add other datasets
+        for i, j in zip([n2, n3], ['n2', 'n3']):
+            ds[stats[0]+'_'+j] = xr.DataArray(i,
+                                      attrs=attrs,
+                                      coords={'x':x, 'y':y},
+                                      dims=['y', 'x'])
+    else:
+        #simpler if first function isn't fourier transform
+        first_func = stats_dict.get(str(stats[0]))
+        print("      "+stats[0])
+        ds = first_func(da)
+
+        #convert back to xarray dataset
+        ds = xr.DataArray(ds,
+                          attrs=attrs,
+                          coords={'x':x, 'y':y},
+                          dims=['y', 'x']).to_dataset(name=stats[0])
+    
+    #loop through the other functions
     for stat in stats[1:]:
         print("      "+stat)
         
