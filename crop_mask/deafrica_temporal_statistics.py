@@ -35,6 +35,7 @@ import dask
 import numpy as np
 import xarray as xr
 import hdstats
+from scipy.signal import wiener
 
 sys.path.append("../Scripts")
 
@@ -71,17 +72,26 @@ def allNaN_arg(da, dim, stat):
         return y
 
 
-def fast_completion(arr):
+def fast_completion(da):
     """
     gap-fill a timeseries
     """
-    mask = np.isnan(arr)
+    if len(da.shape) == 1:
+        raise Exception("'fast_completion' does not currently operate on 1D timeseries")
+    # complete the timeseries (remove NaNs)
+    # grab coords etc
+    x, y, time, attrs = da.x, da.y, da.time, da.attrs
+
+    # reshape to satisfy function
+    da = da.transpose("y", "x", "time").values
+    
+    mask = np.isnan(da)
     idx = np.where(~mask, np.arange(mask.shape[-1]), 0)
     np.maximum.accumulate(idx, axis=-1, out=idx)
     i, j = np.meshgrid(np.arange(idx.shape[0]),
                        np.arange(idx.shape[1]),
                        indexing="ij")
-    dat = arr[i[:, :, np.newaxis], j[:, :, np.newaxis], idx]
+    dat = da[i[:, :, np.newaxis], j[:, :, np.newaxis], idx]
     if np.isnan(np.sum(dat[:, :, 0])):
         fill = np.nanmean(dat, axis=-1)
         for t in range(dat.shape[-1]):
@@ -90,15 +100,27 @@ def fast_completion(arr):
                 dat[mask, t] = fill[mask]
             else:
                 break
+                
+    #stack back into dataarray
+    dat = xr.DataArray(
+                dat,
+                attrs=attrs,
+                coords={
+                    "x": x,
+                    "y": y,
+                    "time": time
+                },
+                dims=["y", "x", "time"],
+            )
+    
     return dat
 
-
-def smooth(arr, k=3):
-    """
-    Apply the scipy.signal.weiner filter
-    to a time-series
-    """
-    return wiener(arr, (1, 1, k))
+def smooth(da, k=3):
+    if len(da.shape) == 1:
+        raise Exception("'Smooth' does not currently operate on 1D timeseries")
+    da = da.transpose("y", "x", "time")
+    func = lambda arr, k: wiener(da, (1, 1, k))
+    return xr.apply_ufunc(func, da, k, dask='allowed')
 
 
 def _vpos(da):
@@ -267,7 +289,8 @@ def xr_phenology(
     ],
     method_sos="first",
     method_eos="last",
-    smooth=None,
+    complete='fast_complete',
+    smoothing=None,
 ):
     """
     Obtain land surface phenology metrics from an
@@ -307,13 +330,15 @@ def xr_phenology(
         on the senescing side of the curve. If 'median', then vEOS is
         estimated as the 'median' value of the negative slopes on the
         senescing side of the curve.
-    complete : bool
-        If True, the timeseries will be completed (gap filled) using
-        hdstats.fast_completion()
-    smooth : str
-        If 'weiner', the timeseries will be smoothed using the
-        scipy.signal.weiner filter with a window size of 3.  If 'rolling_mean', 
-        then timeseries is smoothed using a rolling mean with a window size of 3
+    complete : str
+        If 'fast_complete', the timeseries will be completed (gap filled) using
+        fast_completion(da), if 'linear', time series with be completed using 
+        da.interpolate_na(method='linear')
+    smoothing : str
+        If 'wiener', the timeseries will be smoothed using the
+        scipy.signal.wiener filter with a window size of 3.  If 'rolling_mean', 
+        then timeseries is smoothed using a rolling mean with a window size of 3.
+        If set to 'linear', will be smoothed using da.resample(time='1W').interpolate('linear')
 
 
     Outputs
@@ -337,60 +362,43 @@ def xr_phenology(
     # If stats supplied is not a list, convert to list.
     stats = stats if isinstance(stats, list) else [stats]
 
-    # complete the timeseries (remove NaNs)
-    # grab coords etc
-    x, y, time, attrs = da.x, da.y, da.time, da.attrs
-
-    # reshape to satisfy function
-    da = da.transpose("y", "x", "time").values
-
     # complete timeseries
-    print("Completing...")
-    da = fast_completion(da)
+    if complete is not None:
+        
+        if complete=='fast_complete':
+            
+            if len(da.shape) == 1:
+                print("fast_complete does not operate on 1D timeseries, using 'linear' instead")
+                da = da.interpolate_na(dim='time', method='linear')
+                
+            else:
+                print("Completing using fast_complete...")
+                da = fast_completion(da)
+            
+        if complete=='linear':
+            print("Completing using linear interp...")
+            da = da.interpolate_na(dim='time', method='linear')
 
-    if smooth is not None:
-
-        if smooth == "rolling_mean":
+    if smoothing is not None:
+        
+        if smoothing == "wiener":
+            if len(da.shape) == 1:
+                print("wiener method does not operate on 1D timeseries, using 'rolling_mean' instead")
+                da = da.rolling(time=3, min_periods=1).mean()
+            
+            else:
+                print("   Smoothing with wiener filter...")
+                da = smooth(da)
+            
+        if smoothing == "rolling_mean":
             print("   Smoothing with rolling mean...")
-            da = xr.DataArray(
-                da,
-                attrs=attrs,
-                coords={
-                    "x": x,
-                    "y": y,
-                    "time": time
-                },
-                dims=["y", "x", "time"],
-            )
-
             da = da.rolling(time=3, min_periods=1).mean()
-
-        if smooth == "weiner":
-            print("   Smoothing with weiner filter...")
-            da = smooth(da)
-            # place back into xarray
-            da = xr.DataArray(
-                da,
-                attrs=attrs,
-                coords={
-                    "x": x,
-                    "y": y,
-                    "time": time
-                },
-                dims=["y", "x", "time"],
-            )
-    else:
-        da = xr.DataArray(
-            da,
-            attrs=attrs,
-            coords={
-                "x": x,
-                "y": y,
-                "time": time
-            },
-            dims=["y", "x", "time"],
-        )
-
+            
+        if smoothing == 'linear':
+            print("    Smoothing using linear interpolation...")
+            da = da.resample(time='1W').interpolate('linear')
+            
+            
     # remove any remaining all-NaN pixels
     mask = da.isnull().all("time")
     da = da.where(~mask, other=0)
@@ -481,13 +489,13 @@ def temporal_statistics(da, stats):
     mask = da.isnull().all("time")
     da = da.where(~mask, other=0)
 
-    # reshape to satisfy functions
-    da = da.transpose("y", "x", "time").values
-
     # complete timeseries
     print("Completing...")
     da = fast_completion(da)
-
+    
+    # ensure dim order is correct for functions
+    da = da.transpose("y", "x", "time").values
+    
     stats_dict = {
         "discordance": lambda da: hdstats.discordance(da, n=10),
         "f_std": lambda da: hdstats.fourier_std(da, n=3, step=5),
