@@ -57,21 +57,25 @@ def crop_features(ds):
 #                               'complexity','central_diff'])
     ts = xr_phenology(data.NDVI, 
                       stats=['Trough','vSOS', 'vPOS','AOS','ROG','ROS'],
-                      complete='fast_completion')
+                      complete='fast_complete')
 
     #rainfall climatology
+    print('rainfall...')
     chirps = assign_crs(xr.open_rasterio('data/CHIRPS/CHPclim_sum.nc'),  crs='epsg:4326')
     chirps = xr_reproject(chirps,ds.geobox,"mode")
     chirps = chirps.to_dataset(name='chirps')
     
     #slope
+    print('slope...')
     slope = dc.load(product='srtm', like=ds.geobox).squeeze()
     slope = slope.elevation
     slope = xr_terrain(slope, 'slope_riserun')
     slope = slope.to_dataset(name='slope')
     
     #Surface reflectance results
+    print("SR..")
     sr = ds.median('time')
+    print('Merging...')
     result = xr.merge([ts, sr, chirps,slope], compat='override')
     result = assign_crs(result, crs=ds.geobox.crs)
 
