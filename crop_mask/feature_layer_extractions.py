@@ -55,9 +55,10 @@ def crop_features(ds):
 #     ts = temporal_statistics(data.NDVI,
 #                        stats=['f_mean', 'abs_change',
 #                               'complexity','central_diff'])
-    ts = xr_phenology(data.NDVI, 
-                      stats=['Trough','vSOS', 'vPOS','AOS','ROG','ROS'],
-                      complete='fast_complete')
+
+    ts = xr_phenology(data.NDVI, complete='fast_complete')
+    
+#     stats=['Trough','vSOS', 'vPOS','AOS','ROG','ROS'],
 
     #rainfall climatology
     print('rainfall...')
