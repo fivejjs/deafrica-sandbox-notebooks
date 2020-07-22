@@ -134,7 +134,7 @@ def _pos(da):
     """
     POS = DOY of peak of season
     """
-    return da.isel(time=da.argmax("time")).time.dt.dayofyear
+    return da.idxmax(dim='time').dt.dayofyear
 
 
 def _trough(da):
@@ -287,8 +287,8 @@ def xr_phenology(
         "ROG",
         "ROS",
     ],
-    method_sos="first",
-    method_eos="last",
+    method_sos="median",
+    method_eos="median",
     complete='fast_complete',
     smoothing=None,
 ):
@@ -490,124 +490,174 @@ def temporal_statistics(da, stats):
         temporal statistics 
 
     """
-    # If stats supplied is not a list, convert to list.
-    stats = stats if isinstance(stats, list) else [stats]
+
+    #define function
+    def calc_temporal_stats(da, stats):
+        # If stats supplied is not a list, convert to list.
+        stats = stats if isinstance(stats, list) else [stats]
     
-    #try to grab the crs info
-    try:
-        crs = da.geobox.crs
-    except:
-        pass
-    
-    # grab all the attributes of the xarray
-    x, y, time, attrs = da.x, da.y, da.time, da.attrs
-    
-    # deal with any all-NaN pixels by filling with 0's
-    mask = da.isnull().all("time")
-    da = da.where(~mask, other=0)
+        #try to grab the crs info
+        try:
+            crs = da.geobox.crs
+        except:
+            pass
+        
+         # grab all the attributes of the xarray
+        x, y, time, attrs = da.x, da.y, da.time, da.attrs
 
-    # complete timeseries
-    print("Completing...")
-    da = fast_completion(da)
-    
-    # ensure dim order is correct for functions
-    da = da.transpose("y", "x", "time").values
-    
-    stats_dict = {
-        "discordance": lambda da: hdstats.discordance(da, n=10),
-        "f_std": lambda da: hdstats.fourier_std(da, n=3, step=5),
-        "f_mean": lambda da: hdstats.fourier_mean(da, n=3, step=5),
-        "f_median": lambda da: hdstats.fourier_median(da, n=3, step=5),
-        "mean_change": lambda da: hdstats.mean_change(da),
-        "median_change": lambda da: hdstats.median_change(da),
-        "abs_change": lambda da: hdstats.mean_abs_change(da),
-        "complexity": lambda da: hdstats.complexity(da),
-        "central_diff": lambda da: hdstats.mean_central_diff(da),
-        "num_peaks": lambda da: hdstats.number_peaks(da, 10),
-    }
+        # deal with any all-NaN pixels by filling with 0's
+        mask = da.isnull().all("time")
+        da = da.where(~mask, other=0)
+
+        # complete timeseries
+        print("Completing...")
+        da = fast_completion(da)
+        
+        # ensure dim order is correct for functions
+        da = da.transpose("y", "x", "time").values
+
+        stats_dict = {
+            "discordance": lambda da: hdstats.discordance(da, n=10),
+            "f_std": lambda da: hdstats.fourier_std(da, n=3, step=5),
+            "f_mean": lambda da: hdstats.fourier_mean(da, n=3, step=5),
+            "f_median": lambda da: hdstats.fourier_median(da, n=3, step=5),
+            "mean_change": lambda da: hdstats.mean_change(da),
+            "median_change": lambda da: hdstats.median_change(da),
+            "abs_change": lambda da: hdstats.mean_abs_change(da),
+            "complexity": lambda da: hdstats.complexity(da),
+            "central_diff": lambda da: hdstats.mean_central_diff(da),
+            "num_peaks": lambda da: hdstats.number_peaks(da, 10),
+        }
 
 
-    print("   Statistics:")
-    # if one of the fourier functions is first (or only)
-    # stat in the list then we need to deal with this
-    if stats[0] in ("f_std", "f_median", "f_mean"):
-        print("      " + stats[0])
-        stat_func = stats_dict.get(str(stats[0]))
-        zz = stat_func(da)
-        n1 = zz[:, :, 0]
-        n2 = zz[:, :, 1]
-        n3 = zz[:, :, 2]
-
-        # intialise dataset with first statistic
-        ds = xr.DataArray(n1,
-                          attrs=attrs,
-                          coords={
-                              "x": x,
-                              "y": y
-                          },
-                          dims=["y", "x"]).to_dataset(name=stats[0] + "_n1")
-
-        # add other datasets
-        for i, j in zip([n2, n3], ["n2", "n3"]):
-            ds[stats[0] + "_" + j] = xr.DataArray(i,
-                                                  attrs=attrs,
-                                                  coords={
-                                                      "x": x,
-                                                      "y": y
-                                                  },
-                                                  dims=["y", "x"])
-    else:
-        # simpler if first function isn't fourier transform
-        first_func = stats_dict.get(str(stats[0]))
-        print("      " + stats[0])
-        ds = first_func(da)
-
-        # convert back to xarray dataset
-        ds = xr.DataArray(ds,
-                          attrs=attrs,
-                          coords={
-                              "x": x,
-                              "y": y
-                          },
-                          dims=["y", "x"]).to_dataset(name=stats[0])
-
-    # loop through the other functions
-    for stat in stats[1:]:
-        print("      " + stat)
-
-        # handle the fourier transform examples
-        if stat in ("f_std", "f_median", "f_mean"):
-            stat_func = stats_dict.get(str(stat))
+        print("   Statistics:")
+        
+        # if one of the fourier functions is first (or only)
+        # stat in the list then we need to deal with this
+        if stats[0] in ("f_std", "f_median", "f_mean"):
+            print("      " + stats[0])
+            stat_func = stats_dict.get(str(stats[0]))
             zz = stat_func(da)
             n1 = zz[:, :, 0]
             n2 = zz[:, :, 1]
             n3 = zz[:, :, 2]
 
-            for i, j in zip([n1, n2, n3], ["n1", "n2", "n3"]):
-                ds[stat + "_" + j] = xr.DataArray(i,
-                                                  attrs=attrs,
-                                                  coords={
-                                                      "x": x,
-                                                      "y": y
-                                                  },
-                                                  dims=["y", "x"])
+            # intialise dataset with first statistic
+            ds = xr.DataArray(n1,
+                              attrs=attrs,
+                              coords={
+                                  "x": x,
+                                  "y": y
+                              },
+                              dims=["y", "x"]).to_dataset(name=stats[0] + "_n1")
 
+            # add other datasets
+            for i, j in zip([n2, n3], ["n2", "n3"]):
+                ds[stats[0] + "_" + j] = xr.DataArray(i,
+                                                      attrs=attrs,
+                                                      coords={
+                                                          "x": x,
+                                                          "y": y
+                                                      },
+                                                      dims=["y", "x"])
         else:
-            # Select a stats function from the dictionary
-            # and add to the dataset
-            stat_func = stats_dict.get(str(stat))
-            ds[stat] = xr.DataArray(stat_func(da),
-                                    attrs=attrs,
-                                    coords={
-                                        "x": x,
-                                        "y": y
-                                    },
-                                    dims=["y", "x"])
-    
-    #try to add back the geobox
-    try:
-        ds = assign_crs(ds, str(crs))
-    except:
-        pass
+            # simpler if first function isn't fourier transform
+            first_func = stats_dict.get(str(stats[0]))
+            print("      " + stats[0])
+            ds = first_func(da)
 
+            # convert back to xarray dataset
+            ds = xr.DataArray(ds,
+                              attrs=attrs,
+                              coords={
+                                  "x": x,
+                                  "y": y
+                              },
+                              dims=["y", "x"]).to_dataset(name=stats[0])
+
+        # loop through the other functions
+        for stat in stats[1:]:
+            print("      " + stat)
+
+            # handle the fourier transform examples
+            if stat in ("f_std", "f_median", "f_mean"):
+                stat_func = stats_dict.get(str(stat))
+                zz = stat_func(da)
+                n1 = zz[:, :, 0]
+                n2 = zz[:, :, 1]
+                n3 = zz[:, :, 2]
+
+                for i, j in zip([n1, n2, n3], ["n1", "n2", "n3"]):
+                    ds[stat + "_" + j] = xr.DataArray(i,
+                                                      attrs=attrs,
+                                                      coords={
+                                                          "x": x,
+                                                          "y": y
+                                                      },
+                                                      dims=["y", "x"])
+
+            else:
+                # Select a stats function from the dictionary
+                # and add to the dataset
+                stat_func = stats_dict.get(str(stat))
+                ds[stat] = xr.DataArray(stat_func(da),
+                                        attrs=attrs,
+                                        coords={
+                                            "x": x,
+                                            "y": y
+                                        },
+                                        dims=["y", "x"])
+
+        #try to add back the geobox
+        try:
+            ds = assign_crs(ds, str(crs))
+        except:
+            pass
+        
+        return ds
+
+    
+    #if dask arrays then map the blocks
+    if dask.is_dask_collection(da):
+        
+        #create a template that matches the final datasets dims & vars
+        arr = da.isel(time=0).drop('time')
+
+        #deal with the case where fourier is first in the list
+        if stats[0] in ("f_std", "f_median", "f_mean"):
+            template = xr.zeros_like(arr).to_dataset(name=stats[0]+"_n1")
+            template[stats[0]+'_n2'] = xr.zeros_like(arr)
+            template[stats[0]+'_n3'] = xr.zeros_like(arr)
+
+            for stat in stats[1:]:
+                if stat in ("f_std", "f_median", "f_mean"):
+                        template[stat+'_n1'] = xr.zeros_like(arr)
+                        template[stat+'_n2'] = xr.zeros_like(arr)
+                        template[stat+'_n3'] = xr.zeros_like(arr)
+                else:
+                    template[stat] = xr.zeros_like(arr)
+        else:
+            template = xr.zeros_like(arr).to_dataset(name=stats[0])
+
+            for stat in stats:
+                if stat in ("f_std", "f_median", "f_mean"):
+                    template[stat+'_n1'] = xr.zeros_like(arr)
+                    template[stat+'_n2'] = xr.zeros_like(arr)
+                    template[stat+'_n3'] = xr.zeros_like(arr)
+                else:
+                     template[stat] = xr.zeros_like(arr)
+        
+        #ensure the time chunk is set to -1
+        da=da.chunk({'time':-1})
+        
+        #apply function across chunks        
+        ds = xr.map_blocks(
+                calc_temporal_stats,
+                da,
+                kwargs={"stats": stats},
+                template=template)
+        
+    else:
+        ds = calc_temporal_stats(da, stats)
+    
     return ds
