@@ -20,8 +20,8 @@ Functions:
     
 ----------  
 TO DO:
-- Handle dask arrays once xarray releases version 0.16
 - Implement intergal-of-season statistic for xr_phenology
+
 """
 
 import sys
@@ -32,9 +32,6 @@ import hdstats
 from scipy.signal import wiener
 from packaging import version
 from datacube.utils.geometry import assign_crs
-
-sys.path.append("../Scripts")
-
 
 def allNaN_arg(da, dim, stat):
     """
@@ -69,11 +66,11 @@ def allNaN_arg(da, dim, stat):
 
 def fast_completion(da):
     """
-    gap-fill a timeseries
+    Quickly gap-fill a timeseries
     """
     if len(da.shape) == 1:
         raise Exception("'fast_completion' does not currently operate on 1D timeseries")
-    # complete the timeseries (remove NaNs)
+
     # grab coords etc
     x, y, time, attrs = da.x, da.y, da.time, da.attrs
 
@@ -108,12 +105,19 @@ def fast_completion(da):
 def smooth(da, k=3):
     if len(da.shape) == 1:
         raise Exception("'Smooth' does not currently operate on 1D timeseries")
+    
+    x, y, time, attrs = da.x, da.y, da.time, da.attrs
     da = da.transpose("y", "x", "time")
-
-    def func(arr, k):
-        return wiener(da, (1, 1, k))
-
-    return xr.apply_ufunc(func, da, k, dask="allowed")
+    da = wiener(da, (1, 1, k))
+    # stack back into dataarray
+    da = xr.DataArray(
+        da,
+        attrs=attrs,
+        coords={"x": x, "y": y, "time": time},
+        dims=["y", "x", "time"],
+    )
+    
+    return da 
 
 
 def _vpos(da):
@@ -281,7 +285,6 @@ def xr_phenology(
     method_eos="last",
     complete="fast_complete",
     smoothing=None,
-    show_progress=True,
 ):
     """
     Obtain land surface phenology metrics from an
@@ -361,16 +364,17 @@ def xr_phenology(
                 if var_name in stats
             }
         )
-        da_all_time = da.chunk({"time": -1})
+        
+        da = da.chunk({"time": -1})
 
-        lazy_phenology = da_all_time.map_blocks(
+        lazy_phenology = da.map_blocks(
             xr_phenology,
             kwargs=dict(
                 stats=stats,
                 method_sos=method_sos,
                 method_eos=method_eos,
                 complete=complete,
-                smoothing=smoothing,
+                smoothing=smoothing
             ),
             template=xr.Dataset(template),
         )
@@ -531,7 +535,7 @@ def temporal_statistics(da, stats):
         # create a template that matches the final datasets dims & vars
         arr = da.isel(time=0).drop("time")
 
-        # deal with the case where fourier is first in the list
+        # deal with the case where fourier is first (or only) item in the list
         if stats[0] in ("f_std", "f_median", "f_mean"):
             template = xr.zeros_like(arr).to_dataset(name=stats[0] + "_n1")
             template[stats[0] + "_n2"] = xr.zeros_like(arr)
@@ -560,10 +564,10 @@ def temporal_statistics(da, stats):
             pass
 
         # ensure the time chunk is set to -1
-        da_all_time = da.chunk({"time": -1})
+        da = da.chunk({"time": -1})
 
         # apply function across chunks
-        lazy_ds = da_all_time.map_blocks(
+        lazy_ds = da.map_blocks(
             temporal_statistics, kwargs={"stats": stats}, template=template
         )
         
