@@ -182,8 +182,8 @@ def _vsos(da, pos, method_sos="first"):
     if method_sos == "median":
         # find index (argmin) where distance is smallest absolute value
         idx = allNaN_arg(xr.ufuncs.fabs(distance), "time", "min").astype("int16")
-
-    return pos_greenup.isel(time=idx)
+    
+    return pos_greenup.isel(time=idx).fillna(0) 
 
 
 def _sos(vsos):
@@ -227,15 +227,14 @@ def _veos(da, pos, method_eos="last"):
         # index where median occurs
         idx = allNaN_arg(xr.ufuncs.fabs(distance), "time", "min").astype("int16")
 
-    return neg_senesce.isel(time=idx)
+    return neg_senesce.isel(time=idx).fillna(0)
 
 
-def _eos(veos):
+def _eos(veos, pos):
     """
     EOS = DOY for end of seasonn
     """
-    return veos.time.dt.dayofyear
-
+    return veos.time.dt.dayofyear 
 
 def _los(da, eos, sos):
     """
@@ -246,7 +245,7 @@ def _los(da, eos, sos):
     los = xr.where(
         los >= 0,
         los,
-        da.time.dt.dayofyear.values[-1] + (eos.where(los < 0) - sos.where(los < 0)),
+        (da.time.dt.dayofyear.max() + (eos.where(los < 0) - sos.where(los < 0))),
     )
 
     return los
@@ -256,14 +255,24 @@ def _rog(vpos, vsos, pos, sos):
     """
     ROG = Rate of Greening (Days)
     """
-    return (vpos - vsos) / (pos - sos)
-
+    rog = (vpos - vsos) / (pos - sos)
+    rog = xr.where(
+        rog>=0,
+        rog,
+        0)
+    
+    return rog.fillna(0)
 
 def _ros(veos, vpos, eos, pos):
     """
-    ROG = Rate of Senescing (Days)
+    ROS = Rate of Senescing (Days)
     """
-    return (veos - vpos) / (eos - pos)
+    ros = (veos - vpos) / (eos - pos)
+    ros = xr.where(
+        ros<=0,
+        ros,
+        0)
+    return ros.fillna(0) 
 
 
 def xr_phenology(
@@ -455,11 +464,11 @@ def xr_phenology(
     vsos = _vsos(da, pos, method_sos=method_sos)
     sos = _sos(vsos)
     veos = _veos(da, pos, method_eos=method_eos)
-    eos = _eos(veos)
+    eos = _eos(veos, pos)
     los = _los(da, eos, sos)
     rog = _rog(vpos, vsos, pos, sos)
     ros = _ros(veos, vpos, eos, pos)
-
+    
     # Dictionary containing the statistics
     stats_dict = {
         "SOS": sos.astype(np.int16),
