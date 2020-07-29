@@ -140,5 +140,5 @@ def two_epochs(ds):
     print('Merging...')
     result = xr.merge([epoch1,epoch2,slope], compat='override')
     result = assign_crs(result, crs=ds.geobox.crs)
-    print(result)
+
     return result.squeeze()
