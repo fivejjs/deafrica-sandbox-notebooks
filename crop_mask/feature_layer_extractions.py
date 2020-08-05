@@ -54,14 +54,10 @@ def phenology_features(ds):
                              drop=True,
                              collection='s2')
     
-    #ndvi = data.NDVI.mean(['x','y'])
-    
     #temporal stats
     ts = temporal_statistics(data.NDVI,
                        stats=['f_mean', 'abs_change','discordance'
                               'complexity','central_diff'])
-
-    #ts = xr_phenology(ndvi, complete='linear')
     
     #rainfall climatology
     print('rainfall...')
