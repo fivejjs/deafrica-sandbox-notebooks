@@ -13,9 +13,9 @@ from odc.algo import xr_reproject, xr_geomedian, randomize, reshape_for_geomedia
 from datacube.utils.geometry import assign_crs
 from odc.algo import randomize, reshape_for_geomedian
 
-sys.path.append('../Scripts')
+sys.path.append('../../Scripts')
 from deafrica_bandindices import calculate_indices
-from deafrica_temporal_statistics import xr_phenology, temporal_statistics
+# from deafrica_temporal_statistics import xr_phenology, temporal_statistics
 from deafrica_classificationtools import HiddenPrints
 from deafrica_datahandling import load_ard
 
@@ -127,7 +127,7 @@ def two_seasons_gm_mads(ds):
     slope = dc.load(product='srtm', like=ds.geobox).squeeze()
     slope = slope.elevation
     slope = xr_terrain(slope, 'slope_riserun')
-    slope = slope.to_dataset(name='slope')
+    slope = slope.to_dataset(name='slope').chunk({'x':1500,'y':1500})
     
     result = xr.merge([epoch1,
                        epoch2,
