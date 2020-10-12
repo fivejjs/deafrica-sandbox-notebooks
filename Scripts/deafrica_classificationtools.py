@@ -1,21 +1,21 @@
 # deafrica_classificationtools.py
 '''
 Description: This file contains a set of python functions for conducting
-machine learning classification on remote sensing data from Digital Earth 
+machine learning classification on remote sensing data from Digital Earth
 Africa's Open Data Cube
 
-License: The code in this notebook is licensed under the Apache License, 
-Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Digital Earth 
-Africa data is licensed under the Creative Commons by Attribution 4.0 
+License: The code in this notebook is licensed under the Apache License,
+Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Digital Earth
+Africa data is licensed under the Creative Commons by Attribution 4.0
 license (https://creativecommons.org/licenses/by/4.0/).
 
-Contact: If you need assistance, please post a question on the Open Data 
-Cube Slack channel (http://slack.opendatacube.org/) or on the GIS Stack 
-Exchange (https://gis.stackexchange.com/questions/ask?tags=open-data-cube) 
-using the `open-data-cube` tag (you can view previously asked questions 
+Contact: If you need assistance, please post a question on the Open Data
+Cube Slack channel (http://slack.opendatacube.org/) or on the GIS Stack
+Exchange (https://gis.stackexchange.com/questions/ask?tags=open-data-cube)
+using the `open-data-cube` tag (you can view previously asked questions
 here: https://gis.stackexchange.com/questions/tagged/open-data-cube).
 
-If you would like to report an issue with this script, you can file one on 
+If you would like to report an issue with this script, you can file one on
 Github https://github.com/digitalearthafrica/deafrica-sandbox-notebooks/issues
 
 Last modified: Septemeber 2020
@@ -47,6 +47,7 @@ from datacube.utils import geometry
 from sklearn.base import ClusterMixin
 from dask.diagnostics import ProgressBar
 from rasterio.features import rasterize
+from sklearn.impute import SimpleImputer
 from rasterio.features import geometry_mask
 from dask_ml.wrappers import ParallelPostFit
 from sklearn.mixture import GaussianMixture
@@ -60,18 +61,17 @@ import warnings
 warnings.simplefilter("default")
 
 sys.path.append('../Scripts')
-from deafrica_spatialtools import xr_rasterize
-from deafrica_bandindices import calculate_indices
 from deafrica_datahandling import mostcommon_crs, load_ard
-
+from deafrica_bandindices import calculate_indices
+from deafrica_spatialtools import xr_rasterize
 
 def sklearn_flatten(input_xr):
     """
-    Reshape a DataArray or Dataset with spatial (and optionally 
-    temporal) structure into an np.array with the spatial and temporal 
+    Reshape a DataArray or Dataset with spatial (and optionally
+    temporal) structure into an np.array with the spatial and temporal
     dimensions flattened into one dimension.
 
-    This flattening procedure enables DataArrays and Datasets to be used 
+    This flattening procedure enables DataArrays and Datasets to be used
     to train and predict
     with sklearn models.
 
@@ -79,17 +79,17 @@ def sklearn_flatten(input_xr):
 
     Parameters
     ----------
-    input_xr : xarray.DataArray or xarray.Dataset 
+    input_xr : xarray.DataArray or xarray.Dataset
         Must have dimensions 'x' and 'y', may have dimension 'time'.
-        Dimensions other than 'x', 'y' and 'time' are unaffected by the 
+        Dimensions other than 'x', 'y' and 'time' are unaffected by the
         flattening.
 
     Returns
     ----------
-    input_np : numpy.array 
-        A numpy array corresponding to input_xr.data (or 
-        input_xr.to_array().data), with dimensions 'x','y' and 'time' 
-        flattened into a single dimension, which is the first axis of 
+    input_np : numpy.array
+        A numpy array corresponding to input_xr.data (or
+        input_xr.to_array().data), with dimensions 'x','y' and 'time'
+        flattened into a single dimension, which is the first axis of
         the returned array. input_np contains no NaNs.
 
     """
@@ -130,30 +130,30 @@ def sklearn_flatten(input_xr):
 
 def sklearn_unflatten(output_np, input_xr):
     """
-    Reshape a numpy array with no 'missing' elements (NaNs) and 
-    'flattened' spatiotemporal structure into a DataArray matching the 
+    Reshape a numpy array with no 'missing' elements (NaNs) and
+    'flattened' spatiotemporal structure into a DataArray matching the
     spatiotemporal structure of the DataArray
 
-    This enables an sklearn model's prediction to be remapped to the 
+    This enables an sklearn model's prediction to be remapped to the
     correct pixels in the input DataArray or Dataset.
 
     Last modified: September 2019
 
     Parameters
     ----------
-    output_np : numpy.array 
-        The first dimension's length should correspond to the number of 
+    output_np : numpy.array
+        The first dimension's length should correspond to the number of
         valid (non-NaN) pixels in input_xr.
-    input_xr : xarray.DataArray or xarray.Dataset 
-        Must have dimensions 'x' and 'y', may have dimension 'time'. 
-        Dimensions other than 'x', 'y' and 'time' are unaffected by the 
+    input_xr : xarray.DataArray or xarray.Dataset
+        Must have dimensions 'x' and 'y', may have dimension 'time'.
+        Dimensions other than 'x', 'y' and 'time' are unaffected by the
         flattening.
 
     Returns
     ----------
-    output_xr : xarray.DataArray 
+    output_xr : xarray.DataArray
         An xarray.DataArray with the same dimensions 'x', 'y' and 'time'
-        as input_xr, and the same valid (non-NaN) pixels. These pixels 
+        as input_xr, and the same valid (non-NaN) pixels. These pixels
         are set to match the data in output_np.
 
     """
@@ -214,12 +214,12 @@ def fit_xr(model, input_xr):
     ----------
     model : scikit-learn model or compatible object
         Must have a fit() method that takes numpy arrays.
-    input_xr : xarray.DataArray or xarray.Dataset. 
+    input_xr : xarray.DataArray or xarray.Dataset.
         Must have dimensions 'x' and 'y', may have dimension 'time'.
 
     Returns
     ----------
-    model : a scikit-learn model which has been fitted to the data in 
+    model : a scikit-learn model which has been fitted to the data in
     the pixels of input_xr.
 
     """
@@ -240,14 +240,14 @@ def predict_xr(model,
     predict and predict_proba methods of sklearn
     estimators. Useful for running predictions
     on a larger-than-RAM datasets.
-    
+
     Last modified: September 2020
 
     Parameters
     ----------
     model : scikit-learn model or compatible object
         Must have a .predict() method that takes numpy arrays.
-    input_xr : xarray.DataArray or xarray.Dataset. 
+    input_xr : xarray.DataArray or xarray.Dataset.
         Must have dimensions 'x' and 'y'
     chunk_size : int
         The dask chunk size to use on the flattened array. If this
@@ -265,20 +265,21 @@ def predict_xr(model,
     return_input : bool
         If True, then the data variables in the 'input_xr' dataset will
         be appended to the output xarray dataset.
-    
+
     Returns
     ----------
-    output_xr : xarray.Dataset 
-        An xarray.Dataset containing the prediction output from model 
+    output_xr : xarray.Dataset
+        An xarray.Dataset containing the prediction output from model
         with input_xr as input, if proba=True then dataset will also contain
-        the prediciton probabilities. Has the same spatiotemporal structure 
+        the prediciton probabilities. Has the same spatiotemporal structure
         as input_xr.
 
     """
     if chunk_size is None:
-        chunk_size = int(input_xr.chunks['x'][0]) * int(input_xr.chunks['y'][0])
-        
-    #convert model to dask predict
+        chunk_size = int(input_xr.chunks['x'][0]) * \
+                         int(input_xr.chunks['y'][0])
+
+    # convert model to dask predict
     model = ParallelPostFit(model)
 
     with joblib.parallel_backend('dask'):
@@ -288,7 +289,7 @@ def predict_xr(model,
 
         for var_name in input_xr.data_vars:
             input_data.append(input_xr[var_name])
-        
+
         input_data_flattened = []
 
         for arr in input_data:
@@ -303,10 +304,10 @@ def predict_xr(model,
                                             input_data_flattened, 0)
 
         if (proba == True) & (persist == True):
-            #persisting data so we don't require loading all the data twice
+            # persisting data so we don't require loading all the data twice
             input_data_flattened = input_data_flattened.persist()
 
-        #apply the classification
+        # apply the classification
         print('   predicting...')
         out_class = model.predict(input_data_flattened)
 
@@ -331,7 +332,7 @@ def predict_xr(model,
             print("   probabilities...")
             out_proba = model.predict_proba(input_data_flattened)
 
-            #convert to %
+            # convert to %
             out_proba = da.max(out_proba, axis=1) * 100.0
 
             if clean == True:
@@ -375,13 +376,13 @@ def predict_xr(model,
                     ]
                 ]).unstack()
 
-            #convert to dataset and rename arrays
+            # convert to dataset and rename arrays
             output_features = output_features.to_dataset(dim='output_dim_0')
             data_vars = list(input_xr.data_vars)
             output_features = output_features.rename(
                 {i: j for i, j in zip(output_features.data_vars, data_vars)})
 
-            #merge with predictions
+            # merge with predictions
             output_xr = xr.merge([output_xr, output_features],
                                  compat='override')
 
@@ -419,22 +420,22 @@ def _get_training_data_for_shp(gdf,
     """
     This is the core function that is triggered by `collect_training_data`.
     The `collect_training_data` function loops through geometries in a geopandas
-    geodataframe and runs the code within `_get_training_data_for_shp`. 
-    Parameters are inherited from `collect_training_data`.  
+    geodataframe and runs the code within `_get_training_data_for_shp`.
+    Parameters are inherited from `collect_training_data`.
     See that function for information on the other params not listed below.
 
     Parameters
     ----------
     index, row : iterables inherited from geopandas object
-    out_arrs : list 
+    out_arrs : list
         An empty list into which the training data arrays are stored.
-    out_vars : list 
+    out_vars : list
         An empty list into which the data varaible names are stored.
 
 
     Returns
     --------
-    Two lists, a list of numpy.arrays containing classes and extracted data for 
+    Two lists, a list of numpy.arrays containing classes and extracted data for
     each pixel or polygon, and another containing the data variable names.
 
     """
@@ -552,7 +553,7 @@ def _get_training_data_for_shp(gdf,
                 data = ds.squeeze()
 
     if return_coords == True:
-        #turn coords into a variable in the ds
+        # turn coords into a variable in the ds
         data['x_coord'] = ds.x + 0 * ds.y
         data['y_coord'] = ds.y + 0 * ds.x
 
@@ -605,19 +606,18 @@ def _get_training_data_parallel(gdf,
     def update(*a):
         pbar.update()
 
-    with mp.Pool(ncpus) as pool:
+    with mp.Pool(ncpus) as pool: 
         for index, row in gdf.iterrows():
             pool.apply_async(_get_training_data_for_shp, [
                 gdf, index, row, results, column_names, products, dc_query,
                 return_coords, custom_func, field, calc_indices, reduce_func,
                 drop, zonal_stats
-            ],
-                             callback=update)
-
+            ],  callback=update)
+            
         pool.close()
         pool.join()
         pbar.close()
-
+        
     return column_names, results
 
 
@@ -633,26 +633,28 @@ def collect_training_data(
     reduce_func=None,
     drop=True,
     zonal_stats=None,
+    clean=True
 ):
     """
+    
     This function executes the training data functions and tidies the results
     into a 'model_input' object containing stacked training data arrays
     with all NaNs & Infs removed. In the instance where ncpus > 1, a parallel version of the
     function will be run (functions are passed to a mp.Pool())
-    
+
     This function provides a number of pre-defined feature layer methods,
-    including calculating band indices, reducing time series using several summary statistics, 
-    and/or generating zonal statistics across polygons.  The 'custom_func' parameter provides 
+    including calculating band indices, reducing time series using several summary statistics,
+    and/or generating zonal statistics across polygons.  The 'custom_func' parameter provides
     a method for the user to supply a custom function for generating features rather than using the
     pre-defined methods.
 
     Parameters
     ----------
-    
+
     gdf : geopandas geodataframe
         geometry data in the form of a geopandas geodataframe
     products : list
-        a list of products to load from the datacube. 
+        a list of products to load from the datacube.
         e.g. ['ls8_usgs_sr_scene', 'ls7_usgs_sr_scene']
     dc_query : dictionary
         Datacube query object, should not contain lat and long (x or y)
@@ -664,37 +666,42 @@ def collect_training_data(
     return_coords : bool
         If True, then the training data will contain two extra columns 'x_coord' and
         'y_coord' corresponding to the x,y coordinate of each sample. This variable can
-        be useful for handling spatial autocorrelation between samples later in the ML workflow. 
-    custom_func : function, optional 
+        be useful for handling spatial autocorrelation between samples later in the ML workflow.
+    custom_func : function, optional
         A custom function for generating feature layers. If this parameter
         is set, all other options (excluding 'zonal_stats'), will be ignored.
-        The result of the 'custom_func' must be a single xarray dataset 
+        The result of the 'custom_func' must be a single xarray dataset
         containing 2D coordinates (i.e x, y - no time dimension). The custom function
         has access to the datacube dataset extracted using the 'dc_query' params. To load
         other datasets, you can use the 'like=ds.geobox' parameter in dc.load
     calc_indices: list, optional
         If not using a custom func, then this parameter provides a method for
         calculating a number of remote sensing indices (e.g. `['NDWI', 'NDVI']`).
-    reduce_func : string, optional 
+    reduce_func : string, optional
         Function to reduce the data from multiple time steps to
         a single timestep. Options are 'mean', 'median', 'std',
         'max', 'min', 'geomedian'.  Ignored if 'custom_func' is provided.
-    drop : boolean, optional , 
+    drop : boolean, optional ,
         If this variable is set to True, and 'calc_indices' are supplied, the
         spectral bands will be dropped from the dataset leaving only the
         band indices as data variables in the dataset. Default is True.
     zonal_stats : string, optional
-        An optional string giving the names of zonal statistics to calculate 
-        for each polygon. Default is None (all pixel values are returned). Supported 
-        values are 'mean', 'median', 'max', 'min', and 'std'. Will work in 
+        An optional string giving the names of zonal statistics to calculate
+        for each polygon. Default is None (all pixel values are returned). Supported
+        values are 'mean', 'median', 'max', 'min', and 'std'. Will work in
         conjuction with a 'custom_func'.
+    clean : bool
+        Whether or not to remove missing values in the training dataset. If True,
+        training labels with any NaNs or Infs in the feature layers will be dropped
+        from the dataset.
 
     Returns
     --------
-    Two lists, a list of numpy.arrays containing classes and extracted data for 
+    Two lists, a list of numpy.arrays containing classes and extracted data for
     each pixel or polygon, and another containing the data variable names.
 
     """
+    
     # check the dtype of the class field
     if (gdf[field].dtype != np.int):
         raise ValueError(
@@ -714,11 +721,11 @@ def collect_training_data(
     if ncpus == 1:
         # progress indicator
         print('Collecting training data in serial mode')
-        i = 0
+        i=0
 
         # list to store results
-        results = []
-        column_names = []
+        results=[]
+        column_names=[]
 
         # loop through polys and extract training data
         for index, row in gdf.iterrows():
@@ -732,7 +739,7 @@ def collect_training_data(
 
     else:
         print('Collecting training data in parallel mode')
-        column_names, results = _get_training_data_parallel(
+        column_names, results=_get_training_data_parallel(
             gdf=gdf,
             products=products,
             dc_query=dc_query,
@@ -747,24 +754,30 @@ def collect_training_data(
 
     # column names are appeneded during each iteration
     # but they are identical, grab only the first instance
-    column_names = column_names[0]
+    column_names=column_names[0]
 
     # Stack the extracted training data for each feature into a single array
-    model_input = np.vstack(results)
-    print(f'\nOutput training data has shape {model_input.shape}')
+    model_input=np.vstack(results)
 
     # Remove any potential nans or infs
-    model_input = model_input[~np.isnan(model_input).any(axis=1)]
-    model_input = model_input[~np.isinf(model_input).any(axis=1)]
-    print("Removed NaNs & Infs, cleaned input shape: ", model_input.shape)
+    num = np.count_nonzero(np.isnan(model_input).any(axis=1))        
+    if clean == True:
+        model_input=model_input[~np.isnan(model_input).any(axis=1)]
+        model_input=model_input[~np.isinf(model_input).any(axis=1)]
+        print("Removed "+str(num)+" rows wth NaNs &/or Infs")
+        print('Output shape: ', model_input.shape)
+        
+    else:
+        print('Returning data without cleaning')
+        print('Output shape: ', model_input.shape)
 
     return column_names, model_input
 
 
 class KMeans_tree(ClusterMixin):
     """
-    A hierarchical KMeans unsupervised clustering model. This class is 
-    a clustering model, so it inherits scikit-learn's ClusterMixin 
+    A hierarchical KMeans unsupervised clustering model. This class is
+    a clustering model, so it inherits scikit-learn's ClusterMixin
     base class.
 
     Parameters
@@ -772,10 +785,10 @@ class KMeans_tree(ClusterMixin):
     n_levels : integer, default 2
         number of levels in the tree of clustering models.
     n_clusters : integer, default 3
-        Number of clusters in each of the constituent KMeans models in 
+        Number of clusters in each of the constituent KMeans models in
         the tree.
     **kwargs : optional
-        Other keyword arguments to be passed directly to the KMeans 
+        Other keyword arguments to be passed directly to the KMeans
         initialiser.
 
     """
@@ -784,12 +797,12 @@ class KMeans_tree(ClusterMixin):
 
         assert (n_levels >= 1)
 
-        self.base_model = KMeans(n_clusters=3, **kwargs)
-        self.n_levels = n_levels
-        self.n_clusters = n_clusters
+        self.base_model=KMeans(n_clusters=3, **kwargs)
+        self.n_levels=n_levels
+        self.n_clusters=n_clusters
         # make child models
         if n_levels > 1:
-            self.branches = [
+            self.branches=[
                 KMeans_tree(n_levels=n_levels - 1,
                             n_clusters=n_clusters,
                             **kwargs) for _ in range(n_clusters)
@@ -797,27 +810,27 @@ class KMeans_tree(ClusterMixin):
 
     def fit(self, X, y=None, sample_weight=None):
         """
-        Fit the tree of KMeans models. All parameters mimic those 
+        Fit the tree of KMeans models. All parameters mimic those
         of KMeans.fit().
 
         Parameters
         ----------
         X : array-like or sparse matrix, shape=(n_samples, n_features)
-            Training instances to cluster. It must be noted that the 
-            data will be converted to C ordering, which will cause a 
+            Training instances to cluster. It must be noted that the
+            data will be converted to C ordering, which will cause a
             memory copy if the given data is not C-contiguous.
         y : Ignored
             not used, present here for API consistency by convention.
         sample_weight : array-like, shape (n_samples,), optional
-            The weights for each observation in X. If None, all 
+            The weights for each observation in X. If None, all
             observations are assigned equal weight (default: None)
         """
 
-        self.labels_ = self.base_model.fit(X,
+        self.labels_=self.base_model.fit(X,
                                            sample_weight=sample_weight).labels_
 
         if self.n_levels > 1:
-            labels_old = np.copy(self.labels_)
+            labels_old=np.copy(self.labels_)
             # make room to add the sub-cluster labels
             self.labels_ *= (self.n_clusters)**(self.n_levels - 1)
 
@@ -833,7 +846,7 @@ class KMeans_tree(ClusterMixin):
 
     def predict(self, X, sample_weight=None):
         """
-        Send X through the KMeans tree and predict the resultant 
+        Send X through the KMeans tree and predict the resultant
         cluster. Compatible with KMeans.predict().
 
         Parameters
@@ -841,7 +854,7 @@ class KMeans_tree(ClusterMixin):
         X : {array-like, sparse matrix}, shape = [n_samples, n_features]
             New data to predict.
         sample_weight : array-like, shape (n_samples,), optional
-            The weights for each observation in X. If None, all 
+            The weights for each observation in X. If None, all
             observations are assigned equal weight (default: None)
 
         Returns
@@ -850,10 +863,10 @@ class KMeans_tree(ClusterMixin):
             Index of the cluster each sample belongs to.
         """
 
-        result = self.base_model.predict(X, sample_weight=sample_weight)
+        result=self.base_model.predict(X, sample_weight=sample_weight)
 
         if self.n_levels > 1:
-            rescpy = np.copy(result)
+            rescpy=np.copy(result)
 
             # make room to add the sub-cluster labels
             result *= (self.n_clusters)**(self.n_levels - 1)
@@ -881,7 +894,7 @@ def spatial_clusters(coordinates, method='Hierarchical', max_distance=None, n_gr
         for the KMeans algo, and 'n_components=n_groups' for the GMM. If using
         method='Hierarchical' then this paramter is ignored.
     coordinates : np.array
-        A numpy array of coordinate values e.g. 
+        A numpy array of coordinate values e.g.
         np.array([[3337270.,  262400.],
                   [3441390., -273060.], ...])
     method : str
@@ -894,36 +907,39 @@ def spatial_clusters(coordinates, method='Hierarchical', max_distance=None, n_gr
     **kwargs : optional,
         Additional keyword arguments to pass to sklearn.cluster.Kmeans or
         sklearn.mixture.GuassianMixture depending on the 'method' argument.
-    
+
     Returns
     -------
      labels : array, shape [n_samples,]
         Index of the cluster each sample belongs to.
 
     """
-    if method not in ['Hierarchical','KMeans','GMM']:
-        raise ValueError("method must be one of: 'Hierarchical','KMeans' or 'GMM'")
-    
+    if method not in ['Hierarchical', 'KMeans', 'GMM']:
+        raise ValueError(
+            "method must be one of: 'Hierarchical','KMeans' or 'GMM'")
+
     if (method in ['GMM', 'KMeans']) & (n_groups is None):
-        raise ValueError("The 'GMM' and 'KMeans' methods requires explicitly setting 'n_groups'")
-    
+        raise ValueError(
+            "The 'GMM' and 'KMeans' methods requires explicitly setting 'n_groups'")
+
     if (method == 'Hierarchical') & (max_distance is None):
-        raise ValueError("The 'Hierarchical' method requires setting max_distance")
-     
+        raise ValueError(
+            "The 'Hierarchical' method requires setting max_distance")
+
     if method == 'Hierarchical':
-        cluster_label = AgglomerativeClustering(n_clusters=None, linkage='complete', 
-                                distance_threshold=max_distance, **kwargs).fit_predict(coordinates)     
-        
+        cluster_label=AgglomerativeClustering(n_clusters=None, linkage='complete',
+                                distance_threshold=max_distance, **kwargs).fit_predict(coordinates)
+
     if method == 'KMeans':
-        cluster_label = KMeans(n_clusters=n_groups,
+        cluster_label=KMeans(n_clusters=n_groups,
                                **kwargs).fit_predict(coordinates)
 
     if method == 'GMM':
-        cluster_label = GaussianMixture(n_components=n_groups,
+        cluster_label=GaussianMixture(n_components=n_groups,
                                         **kwargs).fit_predict(coordinates)
-    
-    print("n clusters = "+ str(len(np.unique(cluster_label))))
-    
+
+    print("n clusters = " + str(len(np.unique(cluster_label))))
+
     return cluster_label
 
 
@@ -932,16 +948,16 @@ def SKCV(X, y, coordinates, n_splits, cluster_method, kfold_method,
          random_state=None, **kwargs):
     """
     Generate spatial k-fold cross validation indices using coordinate data.
-    This function wraps the 'SpatialShuffleSplit' and 'SpatialKFold' classes. 
+    This function wraps the 'SpatialShuffleSplit' and 'SpatialKFold' classes.
     These classes ingest coordinate data in the form of an
     np.array([[Eastings, northings]]) and assign samples to a spatial cluster
-    using either a KMeans or Gaussain Mixture model algorithm.  
-    
+    using either a KMeans or Gaussain Mixture model algorithm.
+
     This cross-validator is preferred over other sklearn.model_selection methods
     for spatial data to avoid overestimating cross-validation scores.
     This can happen because of the inherent spatial autocorrelation that is usually
     associated with this type of data.
-    
+
     Last modified: September 2020
 
     Parameters
@@ -955,7 +971,7 @@ def SKCV(X, y, coordinates, n_splits, cluster_method, kfold_method,
         for the KMeans algo, and 'n_components=n_groups' for the GMM. If using
         cluster_method='Hierarchical' then this parameter is ignored.
     coordinates : np.array
-        A numpy array of coordinate values e.g. 
+        A numpy array of coordinate values e.g.
         np.array([[3337270.,  262400.],
                   [3441390., -273060.], ...])
     cluster_method : str
@@ -1000,16 +1016,16 @@ def SKCV(X, y, coordinates, n_splits, cluster_method, kfold_method,
     **kwargs : optional,
         Additional keyword arguments to pass to sklearn.cluster.Kmeans or
         sklearn.mixture.GuassianMixture depending on the cluster_method argument.
-    
+
     Returns
     --------
-    generator object _BaseSpatialCrossValidator.split 
-            
-    
+    generator object _BaseSpatialCrossValidator.split
+
+
     """
-    #intiate a method
+    # intiate a method
     if kfold_method == 'SpatialShuffleSplit':
-        splitter = _SpatialShuffleSplit(n_groups=n_groups,
+        splitter=_SpatialShuffleSplit(n_groups=n_groups,
                                        method=cluster_method,
                                        coordinates=coordinates,
                                        max_distance=max_distance,
@@ -1021,7 +1037,7 @@ def SKCV(X, y, coordinates, n_splits, cluster_method, kfold_method,
                                        **kwargs)
 
     if kfold_method == 'SpatialKFold':
-        splitter = _SpatialKFold(n_groups=n_groups,
+        splitter=_SpatialKFold(n_groups=n_groups,
                                 coordinates=coordinates,
                                 max_distance=max_distance,
                                 method=cluster_method,
@@ -1029,7 +1045,7 @@ def SKCV(X, y, coordinates, n_splits, cluster_method, kfold_method,
                                 random_state=random_state,
                                 balance=balance,
                                 **kwargs)
-    
+
     return splitter.split(coordinates)
 
 
@@ -1037,15 +1053,15 @@ def spatial_train_test_split(X, y, coordinates, cluster_method, kfold_method,
                              test_size, balance, n_groups=None, max_distance=None,
                              random_state=None, train_size=None, **kwargs):
     """
-    Split arrays into random train and test subsets. Similar to 
+    Split arrays into random train and test subsets. Similar to
     `sklearn.model_selection.train_test_split` but instead works on
     spatial coordinate data. Coordinate data is grouped according
     to either a GMM or KMeans algorthim.
-    
+
     Grouping by spatial clusters is preferred over plain random splits for
     spatial data to avoid overestimating validation scores due to spatial
-    autocorrelation. 
-    
+    autocorrelation.
+
     Parameters
     ----------
     X : np.array
@@ -1057,7 +1073,7 @@ def spatial_train_test_split(X, y, coordinates, cluster_method, kfold_method,
         for the KMeans algo, and 'n_components=n_groups' for the GMM. If using
         cluster_method='Hierarchical' then this parameter is ignored.
     coordinates : np.array
-        A numpy array of coordinate values e.g. 
+        A numpy array of coordinate values e.g.
         np.array([[3337270.,  262400.],
                   [3441390., -273060.], ...])
     cluster_method : str
@@ -1101,16 +1117,16 @@ def spatial_train_test_split(X, y, coordinates, cluster_method, kfold_method,
     **kwargs : optional,
         Additional keyword arguments to pass to sklearn.cluster.Kmeans or
         sklearn.mixture.GuassianMixture depending on the cluster_method argument.
-        
+
     Returns
     -------
     Tuple :
         Contains four arrays in the following order:
             X_train, X_test, y_train, y_test
-        
+
     """
     if kfold_method == 'SpatialShuffleSplit':
-        splitter = _SpatialShuffleSplit(n_groups=n_groups,
+        splitter=_SpatialShuffleSplit(n_groups=n_groups,
                                        method=cluster_method,
                                        coordinates=coordinates,
                                        max_distance=max_distance,
@@ -1122,7 +1138,7 @@ def spatial_train_test_split(X, y, coordinates, cluster_method, kfold_method,
                                        **kwargs)
 
     if kfold_method == 'SpatialKFold':
-        splitter = _SpatialKFold(n_groups=n_groups,
+        splitter=_SpatialKFold(n_groups=n_groups,
                                 coordinates=coordinates,
                                 max_distance=max_distance,
                                 method=cluster_method,
@@ -1131,10 +1147,10 @@ def spatial_train_test_split(X, y, coordinates, cluster_method, kfold_method,
                                 balance=balance,
                                 **kwargs)
 
-    lst = []
+    lst=[]
     for train, test in splitter.split(coordinates):
-        X_tr, X_tt = X[train, :], X[test, :]
-        y_tr, y_tt = y[train], y[test]
+        X_tr, X_tt=X[train, :], X[test, :]
+        y_tr, y_tt=y[train], y[test]
         lst.extend([X_tr, X_tt, y_tr, y_tt])
 
     return (lst[0], lst[1], lst[2], lst[3])
@@ -1162,20 +1178,20 @@ def _partition_by_sum(array, parts):
     Notes
     -----
     Solution from https://stackoverflow.com/a/54024280
-  
+
     """
-    array = np.atleast_1d(array).ravel()
+    array=np.atleast_1d(array).ravel()
     if parts > array.size:
         raise ValueError(
             "Cannot partition an array of size {} into {} parts of equal sum.".
             format(array.size, parts))
-    cumulative_sum = array.cumsum()
+    cumulative_sum=array.cumsum()
     # Ideally, we want each part to have the same number of points (total /
     # parts).
-    ideal_sum = cumulative_sum[-1] // parts
+    ideal_sum=cumulative_sum[-1] // parts
     # If the parts are ideal, the cumulative sum of each part will be this
-    ideal_cumsum = np.arange(1, parts) * ideal_sum
-    indices = np.searchsorted(cumulative_sum, ideal_cumsum, side="right")
+    ideal_cumsum=np.arange(1, parts) * ideal_sum
+    indices=np.searchsorted(cumulative_sum, ideal_cumsum, side="right")
     # Check for repeated split points, which indicates that there is no way to
     # split the array.
     if np.unique(indices).size != indices.size:
@@ -1195,9 +1211,9 @@ class _BaseSpatialCrossValidator(BaseCrossValidator, metaclass=ABCMeta):
         The number of groups to create. This is passed as 'n_clusters=n_groups'
         for the KMeans algo, and 'n_components=n_groups' for the GMM.
     coordinates : np.array
-        A numpy array of coordinate values e.g. 
+        A numpy array of coordinate values e.g.
         np.array([[3337270.,  262400.],
-                  [3441390., -273060.], ...,             
+                  [3441390., -273060.], ...,
     method : str
         Which algorithm to use to seperate data points. Either 'KMeans' or 'GMM'
     n_splits : int
@@ -1270,7 +1286,7 @@ class _BaseSpatialCrossValidator(BaseCrossValidator, metaclass=ABCMeta):
         """
         return self.n_splits
 
-    @abstractmethod
+    @ abstractmethod
     def _iter_test_indices(self, X=None, y=None, groups=None):
         """
         Generates integer indices corresponding to test sets.
@@ -1326,7 +1342,7 @@ class _SpatialShuffleSplit(_BaseSpatialCrossValidator):
         for the KMeans algo, and 'n_components=n_groups' for the GMM. If using
         cluster_method='Hierarchical' then this parameter is ignored.
     coordinates : np.array
-        A numpy array of coordinate values e.g. 
+        A numpy array of coordinate values e.g.
         np.array([[3337270.,  262400.],
                   [3441390., -273060.], ...])
     cluster_method : str
@@ -1421,16 +1437,16 @@ class _SpatialShuffleSplit(_BaseSpatialCrossValidator):
             The testing set indices for that split.
 
         """
-        labels = spatial_clusters(n_groups=self.n_groups,
+        labels=spatial_clusters(n_groups=self.n_groups,
                                   coordinates=self.coordinates,
                                   method=self.method,
                                   max_distance=self.max_distance,
                                   **self.kwargs)
 
-        cluster_ids = np.unique(labels)
+        cluster_ids=np.unique(labels)
         # Generate many more splits so that we can pick and choose the ones
         # that have the right balance of training and testing data.
-        shuffle = ShuffleSplit(
+        shuffle=ShuffleSplit(
             n_splits=self.n_splits * self.balance,
             test_size=self.test_size,
             train_size=self.train_size,
@@ -1438,17 +1454,17 @@ class _SpatialShuffleSplit(_BaseSpatialCrossValidator):
         ).split(cluster_ids)
 
         for _ in range(self.n_splits):
-            test_sets, balance = [], []
+            test_sets, balance=[], []
             for _ in range(self.balance):
                 # This is a false positive in pylint which is why the warning
                 # is disabled at the top of this file:
                 # https://github.com/PyCQA/pylint/issues/1830
                 # pylint: disable=stop-iteration-return
-                train_clusters, test_clusters = next(shuffle)
+                train_clusters, test_clusters=next(shuffle)
                 # pylint: enable=stop-iteration-return
-                train_points = np.where(
+                train_points=np.where(
                     np.isin(labels, cluster_ids[train_clusters]))[0]
-                test_points = np.where(
+                test_points=np.where(
                     np.isin(labels, cluster_ids[test_clusters]))[0]
                 # The proportion of data points assigned to each group should
                 # be close the proportion of clusters assigned to each group.
@@ -1456,7 +1472,7 @@ class _SpatialShuffleSplit(_BaseSpatialCrossValidator):
                     abs(train_points.size / test_points.size -
                         train_clusters.size / test_clusters.size))
                 test_sets.append(test_points)
-            best = np.argmin(balance)
+            best=np.argmin(balance)
             yield test_sets[best]
 
 
@@ -1488,7 +1504,7 @@ class _SpatialKFold(_BaseSpatialCrossValidator):
         for the KMeans algo, and 'n_components=n_groups' for the GMM. If using
         cluster_method='Hierarchical' then this parameter is ignored.
     coordinates : np.array
-        A numpy array of coordinate values e.g. 
+        A numpy array of coordinate values e.g.
         np.array([[3337270.,  262400.],
                   [3441390., -273060.], ...])
     cluster_method : str
@@ -1514,7 +1530,7 @@ class _SpatialKFold(_BaseSpatialCrossValidator):
     **kwargs : optional,
         Additional keyword arguments to pass to sklearn.cluster.Kmeans or
         sklearn.mixture.GuassianMixture depending on the cluster_method argument.
-        
+
     """
 
     def __init__(self,
@@ -1538,10 +1554,10 @@ class _SpatialKFold(_BaseSpatialCrossValidator):
             raise ValueError(
                 "Number of splits must be >=2 for clusterKFold. Given {}.".
                 format(n_splits))
-        self.shuffle = shuffle
-        self.random_state = random_state
-        self.balance = balance
-        self.kwargs = kwargs
+        self.shuffle=shuffle
+        self.random_state=random_state
+        self.balance=balance
+        self.kwargs=kwargs
 
     def _iter_test_indices(self, X=None, y=None, groups=None):
         """
@@ -1565,13 +1581,13 @@ class _SpatialKFold(_BaseSpatialCrossValidator):
             The testing set indices for that split.
 
         """
-        labels = spatial_clusters(n_groups=self.n_groups,
+        labels=spatial_clusters(n_groups=self.n_groups,
                                   coordinates=self.coordinates,
                                   method=self.method,
                                   max_distance=self.max_distance,
                                   **self.kwargs)
 
-        cluster_ids = np.unique(labels)
+        cluster_ids=np.unique(labels)
         if self.n_splits > cluster_ids.size:
             raise ValueError(
                 "Number of k-fold splits ({}) cannot be greater than the number of "
@@ -1580,11 +1596,11 @@ class _SpatialKFold(_BaseSpatialCrossValidator):
         if self.shuffle:
             check_random_state(self.random_state).shuffle(cluster_ids)
         if self.balance:
-            cluster_sizes = [np.isin(labels, i).sum() for i in cluster_ids]
+            cluster_sizes=[np.isin(labels, i).sum() for i in cluster_ids]
             try:
-                split_points = _partition_by_sum(cluster_sizes,
+                split_points=_partition_by_sum(cluster_sizes,
                                                 parts=self.n_splits)
-                folds = np.split(np.arange(cluster_ids.size), split_points)
+                folds=np.split(np.arange(cluster_ids.size), split_points)
             except ValueError:
                 warnings.warn(
                     "Could not balance folds to have approximately the same "
@@ -1593,15 +1609,15 @@ class _SpatialKFold(_BaseSpatialCrossValidator):
                     "the number of clusters may help.",
                     UserWarning,
                 )
-                folds = [
+                folds=[
                     i
                     for _, i in KFold(n_splits=self.n_splits).split(cluster_ids)
                 ]
         else:
-            folds = [
+            folds=[
                 i for _, i in KFold(n_splits=self.n_splits).split(cluster_ids)
             ]
         for test_clusters in folds:
-            test_points = np.where(np.isin(labels,
+            test_points=np.where(np.isin(labels,
                                            cluster_ids[test_clusters]))[0]
             yield test_points

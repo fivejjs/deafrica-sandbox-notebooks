@@ -127,7 +127,7 @@ def two_seasons_gm_mads(ds):
     slope = dc.load(product='srtm', like=ds.geobox).squeeze()
     slope = slope.elevation
     slope = xr_terrain(slope, 'slope_riserun')
-    slope = slope.to_dataset(name='slope').chunk({'x':1500,'y':1500})
+    slope = slope.to_dataset(name='slope')#.chunk({'x':1500,'y':1500})
     
     result = xr.merge([epoch1,
                        epoch2,
