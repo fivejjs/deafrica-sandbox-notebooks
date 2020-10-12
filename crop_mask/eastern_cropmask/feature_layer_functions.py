@@ -8,10 +8,9 @@ import sys
 import xarray as xr
 import warnings
 import dask.array as da
-import richdem as rd
-from odc.algo import xr_reproject, xr_geomedian, randomize, reshape_for_geomedian
 from datacube.utils.geometry import assign_crs
-from odc.algo import randomize, reshape_for_geomedian
+from datacube.testutils.io import rio_slurp_xarray
+from odc.algo import randomize, reshape_for_geomedian, xr_reproject, xr_geomedian
 
 sys.path.append('../../Scripts')
 from deafrica_bandindices import calculate_indices
@@ -20,38 +19,6 @@ from deafrica_classificationtools import HiddenPrints
 from deafrica_datahandling import load_ard
 
 warnings.filterwarnings("ignore")
-
-def xr_terrain(da, attribute=None):
-    """
-    Using the richdem package, calculates terrain attributes
-    on a DEM stored in memory as an xarray.DataArray 
-    
-    Params
-    -------
-    da : xr.DataArray
-    attribute : str
-        One of the terrain attributes that richdem.TerrainAttribute()
-        has implemented. e.g. 'slope_riserun', 'slope_percentage', 'aspect'.
-        See all option here:  
-        https://richdem.readthedocs.io/en/latest/python_api.html#richdem.TerrainAttribute
-        
-    """
-    #remove time if its there
-    da = da.squeeze()
-    #convert to richdem array
-    rda = rd.rdarray(da.data, no_data=da.attrs['nodata'])
-    #add projection and geotransform
-    rda.projection=pyproj.crs.CRS(da.attrs['crs']).to_wkt()
-    rda.geotransform = da.geobox.affine.to_gdal()
-    #calulate attribute
-    attrs = rd.TerrainAttribute(rda, attrib=attribute)
-
-    #return as xarray DataArray
-    return xr.DataArray(attrs,
-                        attrs=da.attrs,
-                        coords={'x':da.x, 'y':da.y},
-                        dims=['y', 'x'])
-
 
 def hdstats_features(ds):
     dc = datacube.Datacube(app='training')
@@ -85,9 +52,8 @@ def hdstats_features(ds):
     epoch2 = fun(ds2, era='_S2')
     
     #slope
-    slope = dc.load(product='srtm', like=ds.geobox).squeeze()
-    slope = slope.elevation
-    slope = xr_terrain(slope, 'slope_riserun')
+    url_slope = "https://deafrica-data.s3.amazonaws.com/ancillary/dem-derivatives/cog_slope_africa.tif"
+    slope = rio_slurp_xarray(url_slope, gbox=ds.geobox)
     slope = slope.to_dataset(name='slope')
     
     result = xr.merge([epoch1,epoch2,slope],compat='override')
@@ -124,10 +90,9 @@ def two_seasons_gm_mads(ds):
     epoch1 = fun(ds1, era='_S1')
     epoch2 = fun(ds2, era='_S2')
     
-    slope = dc.load(product='srtm', like=ds.geobox).squeeze()
-    slope = slope.elevation
-    slope = xr_terrain(slope, 'slope_riserun')
-    slope = slope.to_dataset(name='slope')#.chunk({'x':1500,'y':1500})
+    url_slope = "https://deafrica-data.s3.amazonaws.com/ancillary/dem-derivatives/cog_slope_africa.tif"
+    slope = rio_slurp_xarray(url_slope, gbox=ds.geobox)
+    slope = slope.to_dataset(name='slope')
     
     result = xr.merge([epoch1,
                        epoch2,
@@ -159,9 +124,8 @@ def simple_features(ds):
     epoch2 = fun(ds2, era='_S2')
     
     #slope
-    slope = dc.load(product='srtm', like=ds.geobox).squeeze()
-    slope = slope.elevation
-    slope = xr_terrain(slope, 'slope_riserun')
+    url_slope = "https://deafrica-data.s3.amazonaws.com/ancillary/dem-derivatives/cog_slope_africa.tif"
+    slope = rio_slurp_xarray(url_slope, gbox=ds.geobox)
     slope = slope.to_dataset(name='slope')
     
     result = xr.merge([epoch1,epoch2,slope],compat='override')
@@ -263,4 +227,42 @@ def xr_geomedian_tmad(ds, axis='time', where=None, **kw):
         dst.attrs.update(src.attrs)
 
     return assign_crs(ds_out, crs=ds.geobox.crs)
-  
+
+
+# import richdem as rd
+# def xr_terrain(da, attribute=None):
+#     """
+#     Using the richdem package, calculates terrain attributes
+#     on a DEM stored in memory as an xarray.DataArray 
+    
+#     Params
+#     -------
+#     da : xr.DataArray
+#     attribute : str
+#         One of the terrain attributes that richdem.TerrainAttribute()
+#         has implemented. e.g. 'slope_riserun', 'slope_percentage', 'aspect'.
+#         See all option here:  
+#         https://richdem.readthedocs.io/en/latest/python_api.html#richdem.TerrainAttribute
+        
+#     """
+#     #remove time if its there
+#     da = da.squeeze()
+#     #convert to richdem array
+#     rda = rd.rdarray(da.data, no_data=da.attrs['nodata'])
+#     #add projection and geotransform
+#     rda.projection=pyproj.crs.CRS(da.attrs['crs']).to_wkt()
+#     rda.geotransform = da.geobox.affine.to_gdal()
+#     #calulate attribute
+#     attrs = rd.TerrainAttribute(rda, attrib=attribute)
+
+#     #return as xarray DataArray
+#     return xr.DataArray(attrs,
+#                         attrs=da.attrs,
+#                         coords={'x':da.x, 'y':da.y},
+#                         dims=['y', 'x'])
+
+   
+#     slope = dc.load(product='srtm', like=ds.geobox).squeeze()
+#     slope = slope.elevation
+#     slope = xr_terrain(slope, 'slope_riserun')
+#     slope = slope.to_dataset(name='slope')#.chunk({'x':1500,'y':1500})
