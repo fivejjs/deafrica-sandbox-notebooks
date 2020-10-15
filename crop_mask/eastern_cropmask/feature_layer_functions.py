@@ -92,7 +92,7 @@ def two_seasons_gm_mads(ds):
     
     url_slope = "https://deafrica-data.s3.amazonaws.com/ancillary/dem-derivatives/cog_slope_africa.tif"
     slope = rio_slurp_xarray(url_slope, gbox=ds.geobox)
-    slope = slope.to_dataset(name='slope').chunk({'x':1500,'y':1500})
+    slope = slope.to_dataset(name='slope').chunk({'x':1000,'y':1000})
     
     result = xr.merge([epoch1,
                        epoch2,

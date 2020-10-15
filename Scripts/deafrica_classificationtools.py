@@ -353,13 +353,12 @@ def predict_xr(model,
             # unflatten the input_data_flattened array and append
             # to the output_xr containin the predictions
             arr = input_xr.to_array()
-            stacked = arr.stack(z=['x', 'y'])
-
+            stacked = arr.stack(z=['y', 'x'])
             # handle multivariable output
             output_px_shape = ()
             if len(input_data_flattened.shape[1:]):
                 output_px_shape = input_data_flattened.shape[1:]
-
+   
             output_features = input_data_flattened.reshape(
                 (len(stacked.z), *output_px_shape))
 
@@ -367,8 +366,7 @@ def predict_xr(model,
             output_features = xr.DataArray(
                 output_features,
                 coords={
-                    'z': stacked['z']
-                },
+                    'z': stacked['z']},
                 dims=[
                     'z', *[
                         'output_dim_' + str(idx)
