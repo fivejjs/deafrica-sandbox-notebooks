@@ -767,26 +767,37 @@ def transform_geojson_wgs_to_epsg(geojson, EPSG):
     return transformed_geojson
 
 
-def zonal_stats_parallel(shp,raster,statistics,out_shp,ncpus):
+def zonal_stats_parallel(shp,
+                         raster,
+                         statistics,
+                         out_shp,
+                         ncpus,
+                         **kwargs):
 
     """
-    Summarizing raster datasets based on vector geometries in
-    parallel.
-    Credit:
-    https://github.com/csc-training/geocomputing/blob/master/python/zonal_stats/zonal_stats_parallel.py
+    Summarizing raster datasets based on vector geometries in parallel.
+    Utilizes the perrygeo/rasterstats package.
     
     Parameters
     ----------
     shp : str
-        Path to shapefile on disk that contain the polygons over
-        which the zonal statistics will be calculated
+        Path to shapefile that contains polygons over
+        which zonal statistics are calculated
     raster: str
-        Path to the raster from which the statistics are calculated
+        Path to the raster from which the statistics are calculated.
+        This can be a virtual raster (.vrt).
+    statistics: list
+        list of statistics to calculate. e.g.
+            ['min', 'max', 'median', 'majority', 'sum']
     out_shp: str
-        Path to export shapefile containing zonal statistcs.
+        Path to export shapefile containing zonal statistics.
     ncpus: int
-        number of cores to parallelize the operations over
-    
+        number of cores to parallelize the operations over. 
+    kwargs: 
+        Any other keyword arguments to rasterstats.zonal_stats()
+        See https://github.com/perrygeo/python-rasterstats for
+        all options
+            
     Returns
     -------
     Exports a shapefile to disk containing the zonal statistics requested
@@ -800,7 +811,7 @@ def zonal_stats_parallel(shp,raster,statistics,out_shp,ncpus):
 
     #calculates zonal stats and adds results to a dictionary
     def worker(z,raster,d):	
-        z_stats = zonal_stats(z,raster, stats=statistics)	
+        z_stats = zonal_stats(z,raster,stats=statistics,**kwargs)	
         for i in range(0,len(z_stats)):
             d[z[i]['id']]=z_stats[i]
 
@@ -821,12 +832,13 @@ def zonal_stats_parallel(shp,raster,statistics,out_shp,ncpus):
     with fiona.open(shp) as zones:
         jobs = []
 
-        #create manager dictionary (polygon ids=keys, stats=entries) where multiple processes can write without conflicts
+        # create manager dictionary (polygon ids=keys, stats=entries)
+        # where multiple processes can write without conflicts
         man = mp.Manager()	
         d = man.dict()	
 
-        #split zone polygons into 10 chunks for parallel processing and call worker() for each. 
-        # Adjust 10 to be number of cores you want to use for optimal performance.
+        #split zone polygons into 'ncpus' chunks for parallel processing 
+        # and call worker() for each
         split = chunks(zones, len(zones)//ncpus)
         for z in split:
             p = mp.Process(target=worker,args=(z, raster,d))
