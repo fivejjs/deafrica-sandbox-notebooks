@@ -776,6 +776,7 @@ def zonal_stats_parallel(shp,
 
     """
     Summarizing raster datasets based on vector geometries in parallel.
+    Each cpu recieves an equal chunk of the dataset. 
     Utilizes the perrygeo/rasterstats package.
     
     Parameters

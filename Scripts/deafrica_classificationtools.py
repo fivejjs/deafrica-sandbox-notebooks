@@ -35,6 +35,7 @@ import dask.array as da
 import geopandas as gpd
 from copy import deepcopy
 import multiprocessing as mp
+import dask.distributed as dd
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from sklearn.cluster import KMeans
@@ -593,6 +594,18 @@ def _get_training_data_parallel(gdf,
     Inherits variables from 'collect_training_data()'.
 
     """
+    # Check if dask-client is running
+    try:
+        zx=None
+        zx = dd.get_client()
+    except:
+        pass
+
+    if zx is not None:
+            raise ValueError(
+                 "You have a Dask Client running, which prevents \n"
+                 "this function from multiprocessing. Close the client.")
+    
     # instantiate lists that can be shared across processes
     manager = mp.Manager()
     results = manager.list()
