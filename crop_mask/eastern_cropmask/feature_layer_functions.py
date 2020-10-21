@@ -14,13 +14,13 @@ from odc.algo import randomize, reshape_for_geomedian, xr_reproject, xr_geomedia
 
 sys.path.append('../../Scripts')
 from deafrica_bandindices import calculate_indices
-# from deafrica_temporal_statistics import xr_phenology, temporal_statistics
+from deafrica_temporal_statistics import xr_phenology, temporal_statistics
 from deafrica_classificationtools import HiddenPrints
 from deafrica_datahandling import load_ard
 
 warnings.filterwarnings("ignore")
 
-def hdstats_features(ds):
+def hdstats_two_seasons(ds):
     dc = datacube.Datacube(app='training')
     ds = ds / 10000
     ds1 = ds.sel(time=slice('2019-01', '2019-06'))
@@ -29,19 +29,28 @@ def hdstats_features(ds):
     def fun(ds, era):
         
         #temporal stats
-        data = calculate_indices(ds,
+        ndvi = calculate_indices(ds,
                              index=['NDVI'],
                              drop=True,
                              collection='s2')
     
-        ts = temporal_statistics(data.NDVI,
-                           stats=['f_mean', 'abs_change','discordance'
+        ts = temporal_statistics(ndvi.NDVI,
+                           stats=['f_mean', 'abs_change','discordance',
                                   'complexity','central_diff'])
         
-        #geomedian
-        gm = xr_geomedian(ds)
+        #geomedian and tmads
+        gm_mads = xr_geomedian_tmad(ds)
+        gm_mads = calculate_indices(gm_mads,
+                               index=['NDVI', 'LAI'],
+                               drop=False,
+                               normalise=False,
+                               collection='s2')
+        gm_mads['edev'] = -np.log(gm_mads['edev'])
+        gm_mads['sdev'] = -np.log(gm_mads['sdev'])
+        gm_mads['bcdev'] = -np.log(gm_mads['bcdev'])
+        
         #merge
-        res = xr.merge([gm,ts],compat='override')
+        res = xr.merge([gm_mads,ts],compat='override')
         
         for band in res.data_vars:
             res = res.rename({band:band+era})
@@ -62,7 +71,7 @@ def hdstats_features(ds):
     return result.squeeze()
 
 
-def two_seasons_gm_mads(ds):
+def gm_mads_two_seasons(ds):
     dc = datacube.Datacube(app='training')
     ds = ds / 10000
     ds1 = ds.sel(time=slice('2019-01', '2019-06'))
@@ -100,7 +109,7 @@ def two_seasons_gm_mads(ds):
 
     return result.squeeze()
     
-def simple_features(ds):
+def simple_two_seasons(ds):
     dc = datacube.Datacube(app='training')
     ds = ds / 10000
     ds1 = ds.sel(time=slice('2019-01', '2019-06'))

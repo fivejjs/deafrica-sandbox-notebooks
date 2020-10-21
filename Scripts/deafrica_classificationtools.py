@@ -478,9 +478,9 @@ def _get_training_data_for_shp(gdf,
 
     # Use custom function for training data if it exists
     if custom_func is not None:
-#         with HiddenPrints():
-        data = custom_func(ds)
-        data = data.where(mask)
+        with HiddenPrints():
+            data = custom_func(ds)
+            data = data.where(mask)
 
     else:
         # mask dataset
@@ -1063,6 +1063,7 @@ def SKCV(X, y, coordinates, n_splits, cluster_method, kfold_method,
 def spatial_train_test_split(X, y, coordinates, cluster_method, kfold_method,
                              test_size, balance, n_groups=None, max_distance=None,
                              random_state=None, train_size=None, **kwargs):
+    
     """
     Split arrays into random train and test subsets. Similar to
     `sklearn.model_selection.train_test_split` but instead works on
