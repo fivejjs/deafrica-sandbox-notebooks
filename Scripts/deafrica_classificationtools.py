@@ -1052,12 +1052,13 @@ def SKCV(X, y, coordinates, n_splits, cluster_method, kfold_method,
                                 coordinates=coordinates,
                                 max_distance=max_distance,
                                 method=cluster_method,
+                               test_size=test_size,
                                 n_splits=n_splits,
                                 random_state=random_state,
                                 balance=balance,
                                 **kwargs)
 
-    return splitter.split(coordinates)
+    return splitter
 
 
 def spatial_train_test_split(X, y, coordinates, cluster_method, kfold_method,
