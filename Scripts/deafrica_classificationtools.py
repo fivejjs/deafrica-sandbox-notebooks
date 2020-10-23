@@ -954,7 +954,7 @@ def spatial_clusters(coordinates, method='Hierarchical', max_distance=None, n_gr
     return cluster_label
 
 
-def SKCV(X, y, coordinates, n_splits, cluster_method, kfold_method,
+def SKCV(coordinates, n_splits, cluster_method, kfold_method,
          test_size, balance, n_groups=None, max_distance=None, train_size=None,
          random_state=None, **kwargs):
     """
@@ -973,10 +973,6 @@ def SKCV(X, y, coordinates, n_splits, cluster_method, kfold_method,
 
     Parameters
     ----------
-    X : np.array
-        Training data features
-    y : np.array
-        Training data labels
     n_groups : int
         The number of groups to create. This is passed as 'n_clusters=n_groups'
         for the KMeans algo, and 'n_components=n_groups' for the GMM. If using
@@ -1052,7 +1048,7 @@ def SKCV(X, y, coordinates, n_splits, cluster_method, kfold_method,
                                 coordinates=coordinates,
                                 max_distance=max_distance,
                                 method=cluster_method,
-                               test_size=test_size,
+                                test_size=test_size,
                                 n_splits=n_splits,
                                 random_state=random_state,
                                 balance=balance,
@@ -1274,7 +1270,7 @@ class _BaseSpatialCrossValidator(BaseCrossValidator, metaclass=ABCMeta):
 
         """
         if X.shape[1] != 2:
-            raise ValueError("X must have exactly 2 columns ({} given).".format(
+            raise ValueError("X (coordinate data) must have exactly 2 columns ({} given).".format(
                 X.shape[1]))
         for train, test in super().split(X, y, groups):
             yield train, test
