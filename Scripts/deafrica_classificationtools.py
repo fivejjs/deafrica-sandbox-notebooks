@@ -54,6 +54,7 @@ from dask_ml.wrappers import ParallelPostFit
 from sklearn.mixture import GaussianMixture
 from datacube.utils.geometry import assign_crs
 from datacube_stats.statistics import GeoMedian
+from datacube.utils.rio import configure_s3_access
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.model_selection import KFold, ShuffleSplit
 from sklearn.model_selection import BaseCrossValidator
@@ -438,7 +439,7 @@ def _get_training_data_for_shp(gdf,
     each pixel or polygon, and another containing the data variable names.
 
     """
-
+    configure_s3_access(aws_unsigned=True, cloud_defaults=True)
     # prevent function altering dictionary kwargs
     dc_query = deepcopy(dc_query)
 
@@ -587,7 +588,8 @@ def _get_training_data_parallel(gdf,
                                 calc_indices=None,
                                 reduce_func=None,
                                 drop=True,
-                                zonal_stats=None):
+                                zonal_stats=None,
+                                debug=False):
     """
     Function passing the '_get_training_data_for_shp' function
     to a mulitprocessing.Pool.
@@ -605,7 +607,7 @@ def _get_training_data_parallel(gdf,
             raise ValueError(
                  "You have a Dask Client running, which prevents \n"
                  "this function from multiprocessing. Close the client.")
-    
+        
     # instantiate lists that can be shared across processes
     manager = mp.Manager()
     results = manager.list()
@@ -616,9 +618,20 @@ def _get_training_data_parallel(gdf,
 
     def update(*a):
         pbar.update()
+    
+    if debug==True:
+        print('Running in debug mode')
+        import logging
+        import time
+        from multiprocessing_logging import install_mp_handler
+        t=time.time()
+        logging.basicConfig(filename=str(int(t))+'_log.txt',
+                            level=logging.INFO)
+        install_mp_handler()
 
     with mp.Pool(ncpus) as pool: 
         for index, row in gdf.iterrows():
+            
             pool.apply_async(_get_training_data_for_shp, [
                 gdf, index, row, results, column_names, products, dc_query,
                 return_coords, custom_func, field, calc_indices, reduce_func,
@@ -644,7 +657,8 @@ def collect_training_data(
     reduce_func=None,
     drop=True,
     zonal_stats=None,
-    clean=True
+    clean=True,
+    debug=False
 ):
     """
     
@@ -761,7 +775,8 @@ def collect_training_data(
             calc_indices=calc_indices,
             reduce_func=reduce_func,
             drop=drop,
-            zonal_stats=zonal_stats)
+            zonal_stats=zonal_stats,
+            debug=debug)
 
     # column names are appeneded during each iteration
     # but they are identical, grab only the first instance

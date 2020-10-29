@@ -66,7 +66,7 @@ def hdstats_two_seasons(ds):
     slope = slope.to_dataset(name='slope')
     
     result = xr.merge([epoch1,epoch2,slope],compat='override')
-    result = assign_crs(result, crs=ds.geobox.crs)
+    result = assign_crs(result, crs=ds.geobox.crs)#.chunk({'x':2000,'y':2000})
     
     return result.squeeze()
 
@@ -101,7 +101,7 @@ def gm_mads_two_seasons(ds):
     
     url_slope = "https://deafrica-data.s3.amazonaws.com/ancillary/dem-derivatives/cog_slope_africa.tif"
     slope = rio_slurp_xarray(url_slope, gbox=ds.geobox)
-    slope = slope.to_dataset(name='slope').chunk({'x':2000,'y':2000})
+    slope = slope.to_dataset(name='slope')#.chunk({'x':2000,'y':2000})
     
     result = xr.merge([epoch1,
                        epoch2,
