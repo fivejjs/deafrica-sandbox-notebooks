@@ -78,7 +78,6 @@ def gm_mads_two_seasons(ds):
     ds2 = ds.sel(time=slice('2019-07', '2019-12')) 
     
     def fun(ds, era):
-        
         #geomedian and tmads
         gm_mads = xr_geomedian_tmad(ds)
         gm_mads = calculate_indices(gm_mads,
@@ -87,9 +86,18 @@ def gm_mads_two_seasons(ds):
                                normalise=False,
                                collection='s2')
         
-        gm_mads['edev'] = -np.log(gm_mads['edev'])
         gm_mads['sdev'] = -np.log(gm_mads['sdev'])
         gm_mads['bcdev'] = -np.log(gm_mads['bcdev'])
+        gm_mads['edev'] = -np.log(gm_mads['edev'])
+        
+        #rainfall climatology
+        if era == '_S1':
+            chirps = assign_crs(xr.open_rasterio('../data/CHIRPS/CHPclim_jan_jun_cumulative_rainfall.nc'),  crs='epsg:4326')
+        if era == '_S2':
+            chirps = assign_crs(xr.open_rasterio('../data/CHIRPS/CHPclim_jul_dec_cumulative_rainfall.nc'),  crs='epsg:4326')
+        
+        chirps = xr_reproject(chirps,ds.geobox,"mode")
+        gm_mads['rain'] = chirps
         
         for band in gm_mads.data_vars:
             gm_mads = gm_mads.rename({band:band+era})

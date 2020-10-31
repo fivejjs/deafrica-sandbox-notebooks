@@ -402,7 +402,7 @@ class HiddenPrints:
         sys.stdout.close()
         sys.stdout = self._original_stdout
 
-
+        
 def _get_training_data_for_shp(gdf,
                                index,
                                row,
@@ -488,7 +488,7 @@ def _get_training_data_for_shp(gdf,
         ds = ds.where(mask)
         # first check enough variables are set to run functions
         if (len(ds.time.values) > 1) and (reduce_func == None):
-            raise ValueError(
+            raise Exception(
                 "You're dataset has " + str(len(ds.time.values)) +
                 " time-steps, please provide a time reduction function," +
                 " e.g. reduce_func='mean'")
@@ -572,12 +572,12 @@ def _get_training_data_for_shp(gdf,
     else:
         raise Exception(zonal_stats + " is not one of the supported" +
                         " reduce functions ('mean','median','std','max','min')")
-
+    
     # Append training data and labels to list
-    out_arrs.append(stacked)
-    out_vars.append([field] + list(data.data_vars))
+    out_arrs.append(np.append(stacked, index))
+    out_vars.append([field]+list(data.data_vars)+['idx'])
 
-
+    
 def _get_training_data_parallel(gdf,
                                 products,
                                 dc_query,
@@ -626,7 +626,7 @@ def _get_training_data_parallel(gdf,
         from multiprocessing_logging import install_mp_handler
         t=time.time()
         logging.basicConfig(filename=str(int(t))+'_log.txt',
-                            level=logging.INFO)
+                            level=logging.DEBUG)
         install_mp_handler()
 
     with mp.Pool(ncpus) as pool: 
@@ -658,6 +658,7 @@ def collect_training_data(
     drop=True,
     zonal_stats=None,
     clean=True,
+    fail_threshold=0.05,
     debug=False
 ):
     """
@@ -784,10 +785,50 @@ def collect_training_data(
 
     # Stack the extracted training data for each feature into a single array
     model_input=np.vstack(results)
+    
+    if ncpus > 1:
+        # Count number of fails
+        num = np.count_nonzero(np.isnan(model_input).any(axis=1))
+        fail_rate = num / len(gdf)
+        print('Percentage of failed on first run = '+str(round(fail_rate*100, 2))+' %')
+        
+        if fail_rate > fail_threshold:
+            print('Attempting to recollect samples that failed')
+            # ---- Now re-run to get values that had NaNs ---
+            #find rows with NaNs
+            nans=model_input[np.isnan(model_input).any(axis=1)]
+            #remove nan rows from model_input object
+            model_input=model_input[~np.isnan(model_input).any(axis=1)]
 
-    # Remove any potential nans or infs
-    num = np.count_nonzero(np.isnan(model_input).any(axis=1))        
+            #get idx of NaN rows and index original gdf
+            idx_nans = nans[:, [-1]].flatten()
+            gdf_rerun = gdf.iloc[idx_nans]
+            gdf_rerun=gdf_rerun.reset_index(drop=True)
+            
+            column_names_again, results_again=_get_training_data_parallel(
+                    gdf=gdf_rerun,
+                    products=products,
+                    dc_query=dc_query,
+                    ncpus=ncpus,
+                    return_coords=return_coords,
+                    custom_func=custom_func,
+                    field=field,
+                    calc_indices=calc_indices,
+                    reduce_func=reduce_func,
+                    drop=drop,
+                    zonal_stats=zonal_stats,
+                    debug=debug)
+
+            # Stack the extracted training data for each feature into a single array
+            model_input_again=np.vstack(results_again)
+
+            #merge results of the re-run with original run
+            model_input=np.vstack((model_input,model_input_again)) 
+
+    # -----------------------------------------------
+    
     if clean == True:
+        num = np.count_nonzero(np.isnan(model_input).any(axis=1))
         model_input=model_input[~np.isnan(model_input).any(axis=1)]
         model_input=model_input[~np.isinf(model_input).any(axis=1)]
         print("Removed "+str(num)+" rows wth NaNs &/or Infs")
@@ -796,8 +837,13 @@ def collect_training_data(
     else:
         print('Returning data without cleaning')
         print('Output shape: ', model_input.shape)
-
-    return column_names, model_input
+    
+    # remove idx column
+    idx_var = column_names[0:-1]
+    model_col_indices = [column_names.index(var_name) for var_name in idx_var]
+    model_input=model_input[:, model_col_indices] 
+                                 
+    return column_names[0:-1], model_input
 
 
 class KMeans_tree(ClusterMixin):
@@ -1645,3 +1691,22 @@ class _SpatialKFold(_BaseSpatialCrossValidator):
             test_points=np.where(np.isin(labels,
                                            cluster_ids[test_clusters]))[0]
             yield test_points
+
+            
+            
+            
+            
+# from backoff_utils import apply_backoff
+# from backoff_utils import strategies            
+    #check if data load has failed and returned mostly NaNs
+    #backoff decorator will attempt re-run 
+#     nan_rate=np.count_nonzero(np.isnan(stacked)) / len(stacked)
+#     if nan_rate > 0.1:
+#         raise ValueError  
+
+# @apply_backoff(strategies.Exponential,
+#                max_tries=3,
+#                max_delay=15,
+#                catch_exceptions=(type(ValueError())))
+#try this instead perhaps:
+# https://stackoverflow.com/questions/11533405/python-multiprocessing-pool-retries
