@@ -18,13 +18,14 @@ here: https://gis.stackexchange.com/questions/tagged/open-data-cube).
 If you would like to report an issue with this script, you can file one on
 Github https://github.com/digitalearthafrica/deafrica-sandbox-notebooks/issues
 
-Last modified: Septemeber 2020
+Last modified: November 2020
 
 
 '''
 
 import sys
 import os
+import time
 import joblib
 import datacube
 import rasterio
@@ -48,7 +49,6 @@ from datacube.utils import geometry
 from sklearn.base import ClusterMixin
 from dask.diagnostics import ProgressBar
 from rasterio.features import rasterize
-from sklearn.impute import SimpleImputer
 from rasterio.features import geometry_mask
 from dask_ml.wrappers import ParallelPostFit
 from sklearn.mixture import GaussianMixture
@@ -573,9 +573,12 @@ def _get_training_data_for_shp(gdf,
         raise Exception(zonal_stats + " is not one of the supported" +
                         " reduce functions ('mean','median','std','max','min')")
     
+    #return unique-id so we can index if load failed silently
+    _id=gdf.iloc[index]['id']
+    
     # Append training data and labels to list
-    out_arrs.append(np.append(stacked, index))
-    out_vars.append([field]+list(data.data_vars)+['idx'])
+    out_arrs.append(np.append(stacked, _id))
+    out_vars.append([field]+list(data.data_vars)+['id'])
 
     
 def _get_training_data_parallel(gdf,
@@ -589,7 +592,7 @@ def _get_training_data_parallel(gdf,
                                 reduce_func=None,
                                 drop=True,
                                 zonal_stats=None,
-                                debug=False):
+                                ):
     """
     Function passing the '_get_training_data_for_shp' function
     to a mulitprocessing.Pool.
@@ -619,16 +622,6 @@ def _get_training_data_parallel(gdf,
     def update(*a):
         pbar.update()
     
-    if debug==True:
-        print('Running in debug mode')
-        import logging
-        import time
-        from multiprocessing_logging import install_mp_handler
-        t=time.time()
-        logging.basicConfig(filename=str(int(t))+'_log.txt',
-                            level=logging.DEBUG)
-        install_mp_handler()
-
     with mp.Pool(ncpus) as pool: 
         for index, row in gdf.iterrows():
             
@@ -659,7 +652,7 @@ def collect_training_data(
     zonal_stats=None,
     clean=True,
     fail_threshold=0.05,
-    debug=False
+    max_retries=4
 ):
     """
     
@@ -700,6 +693,8 @@ def collect_training_data(
         containing 2D coordinates (i.e x, y - no time dimension). The custom function
         has access to the datacube dataset extracted using the 'dc_query' params. To load
         other datasets, you can use the 'like=ds.geobox' parameter in dc.load
+    field : str
+        Name of the column in the gdf that contains the class labels
     calc_indices: list, optional
         If not using a custom func, then this parameter provides a method for
         calculating a number of remote sensing indices (e.g. `['NDWI', 'NDVI']`).
@@ -720,7 +715,16 @@ def collect_training_data(
         Whether or not to remove missing values in the training dataset. If True,
         training labels with any NaNs or Infs in the feature layers will be dropped
         from the dataset.
-
+    fail_threshold : float, default 0.05
+        Silent read fails on S3 mean some rows in the returned data contain all-NaNs,
+        set the fail_threshold fraction to specify a minimum number of acceptable fails
+        e.g. setting fail_threshold to 0.05 means 5 % no-data in the returned dataset is acceptable.
+        Above this fraction the function will attempt to recollect the samples that have failed.
+        A sample is defined as having failed if it returns > 50 % NaN values.
+    max_retries: int, default 3
+        number of times to retry collecting a sample. This number is invoked if the fail_threshold is 
+        not reached.
+        
     Returns
     --------
     Two lists, a list of numpy.arrays containing classes and extracted data for
@@ -733,7 +737,7 @@ def collect_training_data(
         raise ValueError(
             'The "field" column of the input vector must contain integer dtypes'
         )
-
+    
     # set up some print statements
     if custom_func is not None:
         print("Reducing data using user supplied custom function")
@@ -743,7 +747,11 @@ def collect_training_data(
         print("Reducing data using: " + reduce_func)
     if zonal_stats is not None:
         print("Taking zonal statistic: " + zonal_stats)
-
+    
+    #add unique id to gdf to help later with indexing failed rows
+    #during muliprocessing
+    gdf['id'] = range(0, len(gdf))
+    
     if ncpus == 1:
         # progress indicator
         print('Collecting training data in serial mode')
@@ -776,54 +784,65 @@ def collect_training_data(
             calc_indices=calc_indices,
             reduce_func=reduce_func,
             drop=drop,
-            zonal_stats=zonal_stats,
-            debug=debug)
+            zonal_stats=zonal_stats
+            )
 
-    # column names are appeneded during each iteration
+    # column names are appended during each iteration
     # but they are identical, grab only the first instance
     column_names=column_names[0]
 
     # Stack the extracted training data for each feature into a single array
     model_input=np.vstack(results)
     
+    # this code block iteratively retries failed rows
+    # up to max_retries or until fail_threshold is
+    # reached - whichever occurs first
     if ncpus > 1:
-        # Count number of fails
-        num = np.count_nonzero(np.isnan(model_input).any(axis=1))
-        fail_rate = num / len(gdf)
-        print('Percentage of failed on first run = '+str(round(fail_rate*100, 2))+' %')
-        
-        if fail_rate > fail_threshold:
-            print('Attempting to recollect samples that failed')
-            # ---- Now re-run to get values that had NaNs ---
-            #find rows with NaNs
-            nans=model_input[np.isnan(model_input).any(axis=1)]
-            #remove nan rows from model_input object
-            model_input=model_input[~np.isnan(model_input).any(axis=1)]
+        i=1
+        while (i < max_retries):
+            # Count number of fails
+            num = np.count_nonzero(np.isnan(model_input), axis=1) > int(model_input.shape[1]*0.5)
+            num = num.sum()
+            fail_rate = num / len(gdf)
+            print('Percentage of possible fails after run '+str(i)+ ' = '+str(round(fail_rate*100, 2))+' %')
+            if fail_rate > fail_threshold:
+                print('Recollecting samples that failed')
+                
+                #find rows where NaNs account for more than half the values
+                nans=model_input[np.count_nonzero(np.isnan(model_input), axis=1) > int(model_input.shape[1]*0.5)]
+                #remove nan rows from model_input object
+                model_input=model_input[np.count_nonzero(np.isnan(model_input), axis=1) <= int(model_input.shape[1]*0.5)]
 
-            #get idx of NaN rows and index original gdf
-            idx_nans = nans[:, [-1]].flatten()
-            gdf_rerun = gdf.iloc[idx_nans]
-            gdf_rerun=gdf_rerun.reset_index(drop=True)
-            
-            column_names_again, results_again=_get_training_data_parallel(
-                    gdf=gdf_rerun,
-                    products=products,
-                    dc_query=dc_query,
-                    ncpus=ncpus,
-                    return_coords=return_coords,
-                    custom_func=custom_func,
-                    field=field,
-                    calc_indices=calc_indices,
-                    reduce_func=reduce_func,
-                    drop=drop,
-                    zonal_stats=zonal_stats,
-                    debug=debug)
+                #get id of NaN rows and index original gdf
+                idx_nans = nans[:, [-1]].flatten()
+                gdf_rerun = gdf.loc[gdf['id'].isin(idx_nans)]
+                gdf_rerun=gdf_rerun.reset_index(drop=True)
 
-            # Stack the extracted training data for each feature into a single array
-            model_input_again=np.vstack(results_again)
+                time.sleep(60) #sleep for 60 sec to rest api 
+                column_names_again, results_again=_get_training_data_parallel(
+                        gdf=gdf_rerun,
+                        products=products,
+                        dc_query=dc_query,
+                        ncpus=ncpus,
+                        return_coords=return_coords,
+                        custom_func=custom_func,
+                        field=field,
+                        calc_indices=calc_indices,
+                        reduce_func=reduce_func,
+                        drop=drop,
+                        zonal_stats=zonal_stats
+                        )
 
-            #merge results of the re-run with original run
-            model_input=np.vstack((model_input,model_input_again)) 
+                # Stack the extracted training data for each feature into a single array
+                model_input_again=np.vstack(results_again)
+
+                #merge results of the re-run with original run
+                model_input=np.vstack((model_input,model_input_again))
+                
+                i += 1
+                
+            else:
+                break
 
     # -----------------------------------------------
     
@@ -838,7 +857,7 @@ def collect_training_data(
         print('Returning data without cleaning')
         print('Output shape: ', model_input.shape)
     
-    # remove idx column
+    # remove id column
     idx_var = column_names[0:-1]
     model_col_indices = [column_names.index(var_name) for var_name in idx_var]
     model_input=model_input[:, model_col_indices] 
@@ -1331,7 +1350,7 @@ class _BaseSpatialCrossValidator(BaseCrossValidator, metaclass=ABCMeta):
 
         """
         if X.shape[1] != 2:
-            raise ValueError("X (coordinate data) must have exactly 2 columns ({} given).".format(
+            raise ValueError("X (the coordinate data) must have exactly 2 columns ({} given).".format(
                 X.shape[1]))
         for train, test in super().split(X, y, groups):
             yield train, test
@@ -1710,3 +1729,13 @@ class _SpatialKFold(_BaseSpatialCrossValidator):
 #                catch_exceptions=(type(ValueError())))
 #try this instead perhaps:
 # https://stackoverflow.com/questions/11533405/python-multiprocessing-pool-retries
+
+#  if debug==True:
+#         print('Running in debug mode')
+#         import logging
+#         import time
+#         from multiprocessing_logging import install_mp_handler
+#         t=time.time()
+#         logging.basicConfig(filename=str(int(t))+'_log.txt',
+#                             level=logging.DEBUG)
+#         install_mp_handler()

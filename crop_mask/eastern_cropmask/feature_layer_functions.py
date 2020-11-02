@@ -81,7 +81,7 @@ def gm_mads_two_seasons(ds):
         #geomedian and tmads
         gm_mads = xr_geomedian_tmad(ds)
         gm_mads = calculate_indices(gm_mads,
-                               index=['NDVI', 'LAI'],
+                               index=['NDVI','LAI','MNDWI'],
                                drop=False,
                                normalise=False,
                                collection='s2')
@@ -97,6 +97,7 @@ def gm_mads_two_seasons(ds):
             chirps = assign_crs(xr.open_rasterio('../data/CHIRPS/CHPclim_jul_dec_cumulative_rainfall.nc'),  crs='epsg:4326')
         
         chirps = xr_reproject(chirps,ds.geobox,"mode")
+        chirps = chirps.chunk({'x':2000,'y':2000})
         gm_mads['rain'] = chirps
         
         for band in gm_mads.data_vars:
@@ -109,7 +110,7 @@ def gm_mads_two_seasons(ds):
     
     url_slope = "https://deafrica-data.s3.amazonaws.com/ancillary/dem-derivatives/cog_slope_africa.tif"
     slope = rio_slurp_xarray(url_slope, gbox=ds.geobox)
-    slope = slope.to_dataset(name='slope')#.chunk({'x':2000,'y':2000})
+    slope = slope.to_dataset(name='slope').chunk({'x':2000,'y':2000})
     
     result = xr.merge([epoch1,
                        epoch2,
