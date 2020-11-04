@@ -22,14 +22,11 @@ Last modified: November 2020
 
 
 '''
-<<<<<<< HEAD
 
-=======
 try:
     import dask_ml
 except ModuleNotFoundError:
     os.system('pip install dask-ml')
->>>>>>> master
 import sys
 import os
 import time
@@ -261,11 +258,7 @@ def predict_xr(model,
     chunk_size : int
         The dask chunk size to use on the flattened array. If this
         is left as None, then the chunks size is inferred from the
-<<<<<<< HEAD
         .chunks method on the `input_xr`
-=======
-        .chunks() method on the `input_xr`
->>>>>>> master
     persist : bool
         If True, and proba=True, then 'input_xr' data will be
         loaded into distributed memory. This will ensure data
@@ -585,11 +578,7 @@ def _get_training_data_for_shp(gdf,
         raise Exception(zonal_stats + " is not one of the supported" +
                         " reduce functions ('mean','median','std','max','min')")
     
-<<<<<<< HEAD
-    #return unique-id so we can index if load failed silently
-=======
     #return unique-id so we can index if dc.load fails silently
->>>>>>> master
     _id=gdf.iloc[index]['id']
     
     # Append training data and labels to list
@@ -731,11 +720,7 @@ def collect_training_data(
         Whether or not to remove missing values in the training dataset. If True,
         training labels with any NaNs or Infs in the feature layers will be dropped
         from the dataset.
-<<<<<<< HEAD
-   fail_threshold : float, default 0.05
-=======
     fail_threshold : float, default 0.02
->>>>>>> master
         Silent read fails on S3 can result in some rows of the returned data containing NaN values.
         The'fail_threshold' fraction specifies a minimum number of acceptable fails.
         e.g. setting 'fail_threshold' to 0.05 means 5 % no-data in the returned dataset is acceptable.
@@ -743,11 +728,7 @@ def collect_training_data(
         A sample is defined as having failed if it returns > 50 % NaN values.
     max_retries: int, default 3
         Maximum number of times to retry collecting samples. This number is invoked
-<<<<<<< HEAD
         if the 'fail_threshold' is not reached.
-=======
-        if the 'fail_threshold' is not reached
->>>>>>> master
         
     Returns
     --------
@@ -836,12 +817,7 @@ def collect_training_data(
                 nans=model_input[np.count_nonzero(np.isnan(model_input), axis=1) > int(model_input.shape[1]*0.5)]
                 #remove nan rows from model_input object
                 model_input=model_input[np.count_nonzero(np.isnan(model_input), axis=1) <= int(model_input.shape[1]*0.5)]
-
-<<<<<<< HEAD
-                #get id of NaN rows and index original gdf
-=======
                 #get '_id' of NaN rows and index original gdf
->>>>>>> master
                 idx_nans = nans[:, [-1]].flatten()
                 gdf_rerun = gdf.loc[gdf['id'].isin(idx_nans)]
                 gdf_rerun=gdf_rerun.reset_index(drop=True)
@@ -1738,36 +1714,3 @@ class _SpatialKFold(_BaseSpatialCrossValidator):
             test_points=np.where(np.isin(labels,
                                            cluster_ids[test_clusters]))[0]
             yield test_points
-
-<<<<<<< HEAD
-            
-            
-            
-            
-# from backoff_utils import apply_backoff
-# from backoff_utils import strategies            
-    #check if data load has failed and returned mostly NaNs
-    #backoff decorator will attempt re-run 
-#     nan_rate=np.count_nonzero(np.isnan(stacked)) / len(stacked)
-#     if nan_rate > 0.1:
-#         raise ValueError  
-
-# @apply_backoff(strategies.Exponential,
-#                max_tries=3,
-#                max_delay=15,
-#                catch_exceptions=(type(ValueError())))
-#try this instead perhaps:
-# https://stackoverflow.com/questions/11533405/python-multiprocessing-pool-retries
-
-#  if debug==True:
-#         print('Running in debug mode')
-#         import logging
-#         import time
-#         from multiprocessing_logging import install_mp_handler
-#         t=time.time()
-#         logging.basicConfig(filename=str(int(t))+'_log.txt',
-#                             level=logging.DEBUG)
-#         install_mp_handler()
-=======
-  
->>>>>>> master
