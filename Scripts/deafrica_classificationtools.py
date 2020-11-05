@@ -22,13 +22,12 @@ Last modified: November 2020
 
 
 '''
-
+import os
 try:
     import dask_ml
 except ModuleNotFoundError:
     os.system('pip install dask-ml')
 import sys
-import os
 import time
 import joblib
 import datacube
@@ -258,7 +257,7 @@ def predict_xr(model,
     chunk_size : int
         The dask chunk size to use on the flattened array. If this
         is left as None, then the chunks size is inferred from the
-        .chunks method on the `input_xr`
+        .chunks() method on the `input_xr`
     persist : bool
         If True, and proba=True, then 'input_xr' data will be
         loaded into distributed memory. This will ensure data
@@ -728,7 +727,7 @@ def collect_training_data(
         A sample is defined as having failed if it returns > 50 % NaN values.
     max_retries: int, default 3
         Maximum number of times to retry collecting samples. This number is invoked
-        if the 'fail_threshold' is not reached.
+        if the 'fail_threshold' is not reached
         
     Returns
     --------
@@ -804,7 +803,7 @@ def collect_training_data(
     # reached - whichever occurs first
     if ncpus > 1:
         i=1
-        while (i < max_retries):
+        while (i <= max_retries):
             # Count number of fails
             num = np.count_nonzero(np.isnan(model_input), axis=1) > int(model_input.shape[1]*0.5)
             num = num.sum()
@@ -817,6 +816,7 @@ def collect_training_data(
                 nans=model_input[np.count_nonzero(np.isnan(model_input), axis=1) > int(model_input.shape[1]*0.5)]
                 #remove nan rows from model_input object
                 model_input=model_input[np.count_nonzero(np.isnan(model_input), axis=1) <= int(model_input.shape[1]*0.5)]
+
                 #get '_id' of NaN rows and index original gdf
                 idx_nans = nans[:, [-1]].flatten()
                 gdf_rerun = gdf.loc[gdf['id'].isin(idx_nans)]
@@ -1714,3 +1714,5 @@ class _SpatialKFold(_BaseSpatialCrossValidator):
             test_points=np.where(np.isin(labels,
                                            cluster_ids[test_clusters]))[0]
             yield test_points
+
+  
