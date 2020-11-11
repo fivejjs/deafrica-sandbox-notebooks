@@ -33,7 +33,7 @@ def hdstats_two_seasons(ds):
                              index=['NDVI'],
                              drop=True,
                              collection='s2')
-    
+        #GAP-FLLING AND/OR SMOOTHING
         ts = temporal_statistics(ndvi.NDVI,
                            stats=['f_mean', 'abs_change','discordance',
                                   'complexity','central_diff'])
