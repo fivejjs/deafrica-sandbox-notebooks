@@ -23,10 +23,6 @@ Last modified: November 2020
 
 '''
 import os
-try:
-    import dask_ml
-except ModuleNotFoundError:
-    os.system('pip install dask-ml')
 import sys
 import time
 import joblib
@@ -471,6 +467,11 @@ def _get_training_data_for_shp(gdf,
         ds = dc.load(product='ga_ls8c_gm_2_annual', **dc_query)
         ds = ds.where(ds != 0, np.nan)
         ds = ds * 2.75e-5 - 0.2
+    
+    #handle s2 gm
+    if 'ga_s2_gm' in products:
+        ds = dc.load(product='ga_s2_gm', **dc_query)
+        ds = ds.where(ds != 0, np.nan)
 
     else:
         # load data
