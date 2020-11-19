@@ -20,6 +20,55 @@ from deafrica_datahandling import load_ard
 
 warnings.filterwarnings("ignore")
 
+def gm_mads_two_seasons(ds):
+    dc = datacube.Datacube(app='training')
+    ds = ds / 10000
+    ds1 = ds.sel(time=slice('2019-01', '2019-06'))
+    ds2 = ds.sel(time=slice('2019-07', '2019-12')) 
+    
+    def fun(ds, era):
+        #geomedian and tmads
+        gm_mads = xr_geomedian_tmad(ds)
+        gm_mads = calculate_indices(gm_mads,
+                               index=['NDVI','LAI','MNDWI'],
+                               drop=False,
+                               normalise=False,
+                               collection='s2')
+        
+        gm_mads['sdev'] = -np.log(gm_mads['sdev'])
+        gm_mads['bcdev'] = -np.log(gm_mads['bcdev'])
+        gm_mads['edev'] = -np.log(gm_mads['edev'])
+        
+        #rainfall climatology
+        if era == '_S1':
+            chirps = assign_crs(xr.open_rasterio('../data/CHIRPS/CHPclim_jan_jun_cumulative_rainfall.nc'),  crs='epsg:4326')
+        if era == '_S2':
+            chirps = assign_crs(xr.open_rasterio('../data/CHIRPS/CHPclim_jul_dec_cumulative_rainfall.nc'),  crs='epsg:4326')
+        
+        chirps = xr_reproject(chirps,ds.geobox,"bilinear")
+        chirps = chirps.chunk({'x':2000,'y':2000})
+        gm_mads['rain'] = chirps
+        
+        for band in gm_mads.data_vars:
+            gm_mads = gm_mads.rename({band:band+era})
+        
+        return gm_mads
+    
+    epoch1 = fun(ds1, era='_S1')
+    epoch2 = fun(ds2, era='_S2')
+    
+    #slope
+    url_slope = "https://deafrica-data.s3.amazonaws.com/ancillary/dem-derivatives/cog_slope_africa.tif"
+    slope = rio_slurp_xarray(url_slope, gbox=ds.geobox)
+    slope = slope.to_dataset(name='slope').chunk({'x':2000,'y':2000})
+    
+    result = xr.merge([epoch1,
+                       epoch2,
+                       slope],compat='override')
+
+    return result.squeeze()
+
+
 def hdstats_two_seasons(ds):
     dc = datacube.Datacube(app='training')
     ds = ds / 10000
@@ -70,54 +119,6 @@ def hdstats_two_seasons(ds):
     
     return result.squeeze()
 
-
-def gm_mads_two_seasons(ds):
-    dc = datacube.Datacube(app='training')
-    ds = ds / 10000
-    ds1 = ds.sel(time=slice('2019-01', '2019-06'))
-    ds2 = ds.sel(time=slice('2019-07', '2019-12')) 
-    
-    def fun(ds, era):
-        #geomedian and tmads
-        gm_mads = xr_geomedian_tmad(ds)
-        gm_mads = calculate_indices(gm_mads,
-                               index=['NDVI','LAI','MNDWI'],
-                               drop=False,
-                               normalise=False,
-                               collection='s2')
-        
-        gm_mads['sdev'] = -np.log(gm_mads['sdev'])
-        gm_mads['bcdev'] = -np.log(gm_mads['bcdev'])
-        gm_mads['edev'] = -np.log(gm_mads['edev'])
-        
-        #rainfall climatology
-        if era == '_S1':
-            chirps = assign_crs(xr.open_rasterio('../data/CHIRPS/CHPclim_jan_jun_cumulative_rainfall.nc'),  crs='epsg:4326')
-        if era == '_S2':
-            chirps = assign_crs(xr.open_rasterio('../data/CHIRPS/CHPclim_jul_dec_cumulative_rainfall.nc'),  crs='epsg:4326')
-        
-        chirps = xr_reproject(chirps,ds.geobox,"bilinear")
-        chirps = chirps.chunk({'x':2000,'y':2000})
-        gm_mads['rain'] = chirps
-        
-        for band in gm_mads.data_vars:
-            gm_mads = gm_mads.rename({band:band+era})
-        
-        return gm_mads
-    
-    epoch1 = fun(ds1, era='_S1')
-    epoch2 = fun(ds2, era='_S2')
-    
-    #slope
-    url_slope = "https://deafrica-data.s3.amazonaws.com/ancillary/dem-derivatives/cog_slope_africa.tif"
-    slope = rio_slurp_xarray(url_slope, gbox=ds.geobox)
-    slope = slope.to_dataset(name='slope').chunk({'x':2000,'y':2000})
-    
-    result = xr.merge([epoch1,
-                       epoch2,
-                       slope],compat='override')
-
-    return result.squeeze()
  
 def simple_two_seasons(ds):
     dc = datacube.Datacube(app='training')
@@ -290,3 +291,9 @@ def xr_geomedian_tmad(ds, axis='time', where=None, **kw):
 #     chirps = assign_crs(xr.open_rasterio('../data/CHIRPS/CHPclim_annualSum.nc'),  crs='epsg:4326')
 #     chirps = xr_reproject(chirps,ds.geobox,"bilinear")
 #     chirps = chirps.to_dataset(name='rainfall').chunk({'x':2000,'y':2000})
+
+    #coords
+    x_coord = ds.x + 0 * ds.y
+    x_coord = x_coord.to_dataset(name='x_coord').chunk({'x':2000,'y':2000})
+    y_coord = ds.y + 0 * ds.x
+    y_coord = y_coord.to_dataset(name='y_coord').chunk({'x':2000,'y':2000})
