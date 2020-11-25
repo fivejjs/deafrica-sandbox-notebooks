@@ -28,7 +28,7 @@ def gm_mads_two_seasons(ds):
     
     def fun(ds, era):
         #geomedian and tmads
-        gm_mads = xr_geomedian_tmad(ds)
+        gm_mads = xr_geomedian_tmad_fast(ds)
         gm_mads = calculate_indices(gm_mads,
                                index=['NDVI','LAI','MNDWI'],
                                drop=False,
@@ -248,6 +248,57 @@ def xr_geomedian_tmad(ds, axis='time', where=None, **kw):
 
     return assign_crs(ds_out, crs=ds.geobox.crs)
 
+def xr_geomedian_tmad_fast(ds, ncpu, client):
+    """
+    Fastest version of geomedian+TMADS.
+    Dask is used to arrange data into yxbt order,
+    openmp runs runs gm+tmads in parallel, but all
+    data is stored in memory
+    """
+
+    
+    def gm_tmad(arr, ncpu, **kw):
+        """
+        arr: a high dimensional numpy array where the last dimension will be reduced. 
+    
+        returns: a numpy array with one less dimension than input.
+        """
+        print('gm')
+        gm = hdstats.nangeomedian_pcm(arr, maxiters=1000,
+                                   eps=1e-4,
+                                   nocheck=True, 
+                                   nodata=0,
+                                   num_threads=ncpu)
+        print('em')
+        emad = hdstats.emad_pcm(arr, gm, num_threads=ncpu)[:,:, np.newaxis]
+        print('sm')
+        smad = hdstats.smad_pcm(arr, gm, num_threads=ncpu)[:,:, np.newaxis]
+        print('bcm')
+        bcmad = hdstats.bcmad_pcm(arr, gm, num_threads=ncpu)[:,:, np.newaxis]
+        return np.concatenate([gm, emad, smad, bcmad], axis=-1)
+    
+    # reorder data into yxbt order using dask
+    bands = list(dv.data for dv in ds.data_vars.values())
+    xx_data = yxbt_sink(bands, client)
+    
+    # run the gm and tmads using hdstats 
+    data = gm_tmad(xx_data, ncpu)
+    
+    # recreate xarray
+    dims = ('y', 'x', 'band')
+    cc = ds.geobox.xr_coords(with_crs=True)
+    cc['band'] = list(ds.data_vars)
+    cc[dims[-1]] = np.hstack([cc[dims[-1]], ['edev', 'sdev', 'bcdev']])
+    xx_out = xr.DataArray(data, dims=dims, coords=cc)
+
+    ds_out = xx_out.to_dataset(dim='band')
+    for b in ds.data_vars.keys():
+        src, dst = ds[b], ds_out[b]
+        dst.attrs.update(src.attrs)
+
+    return assign_crs(ds_out, crs=ds.geobox.crs)
+
+
 
 # import richdem as rd
 # def xr_terrain(da, attribute=None):
@@ -293,7 +344,7 @@ def xr_geomedian_tmad(ds, axis='time', where=None, **kw):
 #     chirps = chirps.to_dataset(name='rainfall').chunk({'x':2000,'y':2000})
 
     #coords
-    x_coord = ds.x + 0 * ds.y
-    x_coord = x_coord.to_dataset(name='x_coord').chunk({'x':2000,'y':2000})
-    y_coord = ds.y + 0 * ds.x
-    y_coord = y_coord.to_dataset(name='y_coord').chunk({'x':2000,'y':2000})
+#     x_coord = ds.x + 0 * ds.y
+#     x_coord = x_coord.to_dataset(name='x_coord').chunk({'x':2000,'y':2000})
+#     y_coord = ds.y + 0 * ds.x
+#     y_coord = y_coord.to_dataset(name='y_coord').chunk({'x':2000,'y':2000})
