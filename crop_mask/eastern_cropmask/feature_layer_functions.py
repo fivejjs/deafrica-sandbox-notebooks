@@ -26,7 +26,7 @@ from deafrica_datahandling import load_ard
 
 warnings.filterwarnings("ignore")
 
-def gm_mads_two_seasons(ds):
+def gm_mads_two_seasons_predict(ds):
     dc = datacube.Datacube(app='training')
     ds = ds / 10000
     ds1 = ds.sel(time=slice('2019-01', '2019-06'))
