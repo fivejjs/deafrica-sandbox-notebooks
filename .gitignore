@@ -3,3 +3,9 @@
 *.xml
 __pycache__
 dask-worker-space
+*.csv
+*.png
+*.model
+# skip the results folder
+results/
+data/
